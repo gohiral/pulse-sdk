@@ -1,0 +1,920 @@
+/* Feedback widget — floating button + page-takeover annotation overlay.
+   Chrome uses the standard backend tokens (canvas / surface / edge / ink) so
+   it flips with the host theme. Type chips carry meaningful color from the
+   existing status palette; priority chips mirror Linear (only Urgent is red). */
+
+/* Token defaults so the widget renders correctly in any consumer app, even
+   one without the funnel-builder design system. Wrapped in `:where()` so
+   they have zero specificity — any matching var the consumer defines wins.
+   Light values are the reference; the `[data-theme="dark"]` block flips a
+   handful for dark mode (matching how Phoenix's stock theme toggle stamps
+   the attribute on `<html>`). */
+:where(:root) {
+  --color-canvas: white;
+  --color-surface: oklch(98% 0 0);
+  --color-edge: oklch(94% 0 0);
+  --color-edge-soft: oklch(92% 0 0);
+  --color-edge-strong: oklch(75% 0 0);
+  --color-ink: black;
+  --color-secondary: oklch(55% 0 0);
+  --color-tertiary: oklch(65% 0 0);
+  --color-error: oklch(62% 0.18 15);
+  --color-warning: oklch(88% 0.14 92);
+  --color-active: oklch(65% 0.15 250);
+}
+
+:where([data-theme="dark"]) {
+  --color-canvas: oklch(14% 0.008 60);
+  --color-surface: oklch(17% 0.006 60);
+  --color-edge: oklch(24% 0.006 60);
+  --color-edge-soft: oklch(21% 0.005 60);
+  --color-edge-strong: oklch(38% 0.004 60);
+  --color-ink: oklch(92% 0.01 60);
+  --color-secondary: oklch(55% 0.005 60);
+  --color-tertiary: oklch(48% 0.004 60);
+}
+
+.fb-fab {
+  position: fixed;
+  /* top/bottom/left/right are set inline by the hook based on the saved corner. */
+  bottom: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border: none;
+  cursor: pointer;
+  z-index: 9998;
+  transition: outline 100ms ease;
+  outline: 0 solid transparent;
+}
+
+.fb-fab:hover {
+  outline: 4px solid color-mix(in oklch, var(--color-ink) 12%, transparent);
+}
+
+.fb-fab:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: 2px;
+}
+
+/* Active state: panel is open. Inverted treatment so the user can see the
+   FAB is "armed" and clicking it again will close. */
+.fb-fab[aria-expanded="true"] {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  border: 1px solid var(--color-edge-strong);
+}
+
+.fb-fab[aria-expanded="true"]:hover {
+  outline: 4px solid color-mix(in oklch, var(--color-edge-strong) 25%, transparent);
+}
+
+.fb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  display: block;
+  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Form panel: floating corner-anchored popover. Top/bottom/left/right are
+   set inline by the hook to follow the FAB corner. Two-column layout —
+   screenshot canvas on the left, structured fields on the right. */
+.fb-form-panel {
+  position: fixed;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 96px);
+  z-index: 9999;
+  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.fb-form-panel .fb-panel {
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge);
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: auto;
+  max-height: calc(100vh - 96px);
+  box-shadow:
+    0 24px 56px rgb(0 0 0 / 0.16),
+    0 8px 16px rgb(0 0 0 / 0.08),
+    0 0 0 1px rgb(0 0 0 / 0.04);
+}
+
+[data-theme="dark"] .fb-form-panel .fb-panel {
+  box-shadow:
+    0 24px 56px rgb(0 0 0 / 0.55),
+    0 8px 16px rgb(0 0 0 / 0.4),
+    0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+/* Landscape screenshots: widen the panel and the screenshot column so the
+   preview reads as a 16:9 frame. Portrait stays at the default 280 px.
+   Wrapped in min-width media so the mobile single-column layout still wins. */
+@media (min-width: 601px) {
+  .fb-form-panel[data-shot-orientation="landscape"] {
+    width: 880px;
+  }
+  .fb-form-panel[data-shot-orientation="landscape"] .fb-panel {
+    grid-template-columns: 520px 1fr;
+  }
+  .fb-form-panel[data-shot-orientation="landscape"] .fb-thumb-btn {
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+}
+
+.fb-stage {
+  position: relative;
+  padding: 24px;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+}
+
+.fb-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge-strong);
+  border-radius: 4px;
+  cursor: crosshair;
+  display: block;
+}
+
+/* V4 annotator chrome: single floating pill anchored at bottom-center. Holds
+   tools, undo/delete, and the action buttons in one row separated by 1px
+   verticals. Strong drop shadow because it floats over a dimmed scrim. */
+.fb-toolbar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 10000;
+  box-shadow:
+    0 24px 64px rgb(0 0 0 / 0.5),
+    0 8px 16px rgb(0 0 0 / 0.3),
+    0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+.fb-tool {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-ink);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.fb-tool:hover {
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+/* Active tool: very soft light-gray fill (not inverted) — keeps the primary
+   action button as the highest-contrast element on the surface. */
+.fb-tool.active {
+  background: oklch(95% 0 0);
+  color: var(--color-ink);
+  border-color: oklch(95% 0 0);
+}
+
+[data-theme="dark"] .fb-tool.active {
+  background: oklch(20% 0.005 60);
+  color: var(--color-ink);
+  border-color: oklch(20% 0.005 60);
+}
+
+.fb-tool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fb-tool:disabled:hover {
+  background: transparent;
+  color: var(--color-secondary);
+}
+
+.fb-tool-letter {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Inline crop "Anwenden" — only shown while the crop tool is active. Mounts
+   inside the pill, sized to match the icon buttons, label-only with primary
+   fill so it pops out after drawing a crop marquee. */
+.fb-tool-apply {
+  height: 28px;
+  margin: 0 2px;
+  padding: 0 12px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: opacity 100ms ease;
+}
+
+.fb-tool-apply:hover {
+  opacity: 0.86;
+}
+
+.fb-tool-apply:disabled {
+  background: var(--color-edge);
+  color: var(--color-tertiary);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.fb-tool-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--color-edge);
+  align-self: center;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* Inside the pill, the action buttons size down to match the tool row. */
+.fb-toolbar .fb-btn-primary,
+.fb-toolbar .fb-btn-secondary {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.fb-text-input {
+  position: fixed;
+  z-index: 10000;
+  background: #E5484D;
+  color: #ffffff;
+  border: 0;
+  outline: none;
+  margin: 0;
+  font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+  font-weight: 700;
+  line-height: 1.15;
+  caret-color: #ffffff;
+  field-sizing: content;
+  min-width: 1ch;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.fb-text-input::placeholder {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Left column — screenshot canvas. surface-tinted with a 1px right divider. */
+.fb-shot-col {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-edge);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* Right column — structured fields, header → body → footer. */
+.fb-fields-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fb-section-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-secondary);
+  margin-bottom: 6px;
+}
+
+.fb-panel-head {
+  padding: 16px 20px 12px;
+}
+
+.fb-panel-head h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+.fb-panel-body {
+  padding: 0 20px 14px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fb-field {
+  display: block;
+}
+
+.fb-input,
+.fb-textarea {
+  /* Host pages without a global border-box reset would otherwise push
+     width + padding + border past the panel's right edge. */
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge-soft);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-ink);
+  outline: 0 solid transparent;
+  transition: border-color 100ms ease, outline 100ms ease;
+}
+
+.fb-input::placeholder,
+.fb-textarea::placeholder {
+  color: var(--color-secondary);
+  opacity: 0.7;
+}
+
+.fb-input:focus,
+.fb-textarea:focus {
+  border-color: var(--color-active);
+  outline: 3px solid color-mix(in oklch, var(--color-active) 22%, transparent);
+}
+
+.fb-textarea {
+  resize: none;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.fb-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Topic segmented bar — required field, no default. Two equal-width buttons
+   stack a 13px label on top and an 11px tertiary subtitle below. Active state
+   mirrors `.fb-chip.active` (very soft light-gray fill) so the seg sits
+   naturally with the priority/type chips below. */
+.fb-topic-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--color-edge-soft);
+  border-radius: 4px;
+  background: var(--color-canvas);
+  overflow: hidden;
+}
+
+.fb-topic-btn {
+  background: transparent;
+  border: 0;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--color-ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.fb-topic-btn + .fb-topic-btn {
+  border-left: 1px solid var(--color-edge-soft);
+}
+
+.fb-topic-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fb-topic-sub {
+  /* Pulled past the marker dot (6 px) + gap (8 px) so the subtitle aligns
+     with the label text, not the dot. */
+  padding-left: 14px;
+  font-size: 11px;
+  color: var(--color-tertiary);
+  line-height: 1.35;
+}
+
+.fb-topic-marker {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-edge-strong);
+  flex-shrink: 0;
+}
+
+.fb-topic-btn:hover:not(.active) {
+  background: oklch(98% 0 0);
+}
+
+[data-theme="dark"] .fb-topic-btn:hover:not(.active) {
+  background: oklch(18% 0.005 60);
+}
+
+.fb-topic-btn.active {
+  background: oklch(95% 0 0);
+}
+
+.fb-topic-btn.active .fb-topic-marker {
+  background: var(--color-ink);
+}
+
+[data-theme="dark"] .fb-topic-btn.active {
+  background: oklch(20% 0.005 60);
+}
+
+/* 4 px horizontal nudge, repeated twice. Triggered after a submit-with-no-pick
+   to draw the eye to the unfilled topic seg. */
+@keyframes fb-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.fb-topic-seg.fb-shake {
+  animation: fb-shake 200ms ease-in-out;
+}
+
+/* V4 chip shape: pill with a small leading dot. Chrome stays grayscale; the
+   only colored elements in the whole widget are the priority chip dots. */
+.fb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-edge-soft);
+  background: var(--color-canvas);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+}
+
+.fb-chip:hover {
+  border-color: var(--color-edge-strong);
+}
+
+/* Active chip: very soft light-gray fill that lets the Senden CTA stay the
+   only high-contrast element on the panel. Text stays the regular ink color. */
+.fb-chip.active {
+  background: oklch(95% 0 0);
+  color: var(--color-ink);
+  border-color: oklch(95% 0 0);
+}
+
+[data-theme="dark"] .fb-chip.active {
+  background: oklch(20% 0.005 60);
+  color: var(--color-ink);
+  border-color: oklch(20% 0.005 60);
+}
+
+.fb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+.fb-chip.active .fb-dot { opacity: 0.7; }
+
+/* Priority: only the dot carries color — the chip itself stays monochrome.
+   Variants are addressed by `data-prio-variant`, not the integer value, so
+   the JS scheme stays decoupled from the visual one. */
+.fb-chip[data-prio-variant="urgent"] .fb-dot {
+  background: var(--color-error);
+  opacity: 1;
+}
+.fb-chip[data-prio-variant="medium"] .fb-dot {
+  background: var(--color-warning);
+  opacity: 1;
+}
+.fb-chip[data-prio-variant="low"] .fb-dot {
+  background: var(--color-tertiary);
+  opacity: 1;
+}
+
+/* Type chip dots: status hues mapped to the three categories. Stay at full
+   opacity even when active so the dark-gray active background doesn't dim
+   the meaning. */
+.fb-chip[data-type="bug"] .fb-dot {
+  background: oklch(62% 0.18 15);
+  opacity: 1;
+}
+.fb-chip[data-type="feedback"] .fb-dot {
+  background: oklch(65% 0.15 250);
+  opacity: 1;
+}
+.fb-chip[data-type="idea"] .fb-dot {
+  background: oklch(65% 0.18 145);
+  opacity: 1;
+}
+
+.fb-chip.active[data-prio-variant] .fb-dot,
+.fb-chip.active[data-type] .fb-dot { opacity: 1; }
+
+.fb-screenshot-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Empty state: dashed canvas that nearly fills the column — the
+   strongest visual cue that this widget is screenshot-first. */
+.fb-shot-empty {
+  flex: 1;
+  min-height: 220px;
+  width: 100%;
+  border: 1.5px dashed var(--color-edge-strong);
+  border-radius: 6px;
+  background: var(--color-canvas);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--color-ink);
+  font: inherit;
+  padding: 20px;
+  text-align: center;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.fb-shot-empty:hover {
+  background: var(--color-surface);
+  border-color: var(--color-ink);
+}
+
+.fb-shot-empty svg {
+  width: 38px;
+  height: 38px;
+  color: var(--color-secondary);
+}
+
+.fb-shot-empty:hover svg { color: var(--color-ink); }
+
+.fb-shot-cta {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.fb-shot-hint {
+  font-size: 11px;
+  color: var(--color-secondary);
+}
+
+/* Attached state: thumb expands to show the entire screenshot. The button
+   fills remaining column height; the image uses object-fit: contain so the
+   full screenshot is visible (letter-boxed if its aspect ratio doesn't
+   match the column). */
+.fb-thumb-btn {
+  border: 1px solid var(--color-edge);
+  padding: 0;
+  background: var(--color-surface);
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  outline: 0 solid transparent;
+  transition: outline 100ms ease;
+  flex: 1;
+  min-height: 240px;
+  display: block;
+}
+
+[data-theme="dark"] .fb-thumb-btn {
+  background: oklch(17% 0.006 60);
+}
+
+.fb-thumb-btn:hover {
+  outline: 2px solid color-mix(in oklch, var(--color-active) 35%, transparent);
+}
+
+.fb-thumb-btn:focus-visible {
+  outline: 2px solid var(--color-active);
+}
+
+.fb-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.fb-thumb-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+/* Small ghost buttons (icon + label). Idle: borderless, subtle text;
+   hover: surface lift + ink text + faint border. Matches the pill language
+   of type/priority chips but in a quieter secondary register. */
+.fb-thumb-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-secondary);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.fb-thumb-action svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.fb-thumb-action:hover {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  border-color: var(--color-edge);
+}
+
+[data-theme="dark"] .fb-thumb-action:hover {
+  background: oklch(20% 0.005 60);
+  border-color: oklch(28% 0.006 60);
+}
+
+.fb-thumb-remove:hover {
+  color: var(--color-error);
+  border-color: color-mix(in oklch, var(--color-error) 30%, var(--color-edge));
+}
+
+.fb-panel-foot {
+  padding: 12px 20px 14px;
+  margin: 0 20px;
+  border-top: 1px solid var(--color-edge);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fb-error {
+  font-size: 12px;
+  color: var(--color-error);
+  margin: 0;
+}
+
+.fb-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fb-btn-primary,
+.fb-btn-secondary {
+  font: inherit;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 100ms ease, opacity 100ms ease;
+}
+
+.fb-btn-primary {
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border: 1px solid var(--color-ink);
+}
+
+.fb-btn-primary:hover {
+  opacity: 0.86;
+}
+
+.fb-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fb-btn-secondary {
+  background: transparent;
+  color: var(--color-ink);
+  border: 1px solid var(--color-edge-strong);
+}
+
+.fb-btn-secondary:hover {
+  background: var(--color-surface);
+}
+
+.fb-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 14px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border-radius: 4px;
+  font: 500 13px/1.5 'IBM Plex Sans', sans-serif;
+  z-index: 10001;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.fb-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fb-toast a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  margin-left: 4px;
+}
+
+.fb-corner-menu {
+  position: fixed;
+  z-index: 10001;
+  min-width: 160px;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge);
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  color: var(--color-ink);
+}
+
+.fb-corner-header {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-secondary);
+  padding: 4px 8px 6px;
+}
+
+.fb-corner-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  font: inherit;
+  color: var(--color-ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+
+.fb-corner-item:hover {
+  background: var(--color-surface);
+}
+
+.fb-corner-item.active {
+  color: var(--color-active);
+  font-weight: 500;
+}
+
+.fb-corner-item svg {
+  flex-shrink: 0;
+  color: var(--color-secondary);
+}
+
+.fb-corner-item.active svg {
+  color: var(--color-active);
+}
+
+/* Narrow viewport: panel stretches edge-to-edge and stacks the screenshot
+   column above the fields column. The big dashed empty-state shrinks so the
+   form fields remain reachable without scrolling. */
+@media (max-width: 600px) {
+  .fb-form-panel {
+    width: auto;
+    left: 16px !important;
+    right: 16px !important;
+  }
+
+  .fb-form-panel .fb-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .fb-shot-col {
+    border-right: none;
+    border-bottom: 1px solid var(--color-edge);
+  }
+
+  .fb-shot-empty {
+    min-height: 140px;
+  }
+
+  .fb-toolbar {
+    bottom: 16px;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 32px);
+    justify-content: center;
+  }
+}
+
+/* Custom tooltip — replaces native `title=` so the chrome matches the
+   design system. Single shared element on body, positioned by JS. Multi-line
+   labels supported via `\n` in the data-fb-tooltip value (pre-line). */
+.fb-tooltip {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  padding: 5px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  white-space: pre-line;
+  max-width: 240px;
+  box-shadow:
+    0 4px 12px rgb(0 0 0 / 0.15),
+    0 1px 3px rgb(0 0 0 / 0.08);
+  transition: opacity 100ms ease;
+  z-index: 99999;
+}
+
+.fb-tooltip.visible {
+  opacity: 1;
+}
+
+[data-theme="dark"] .fb-tooltip {
+  background: oklch(85% 0.005 60);
+  color: oklch(14% 0.008 60);
+  box-shadow:
+    0 4px 12px rgb(0 0 0 / 0.5),
+    0 1px 3px rgb(0 0 0 / 0.3);
+}
