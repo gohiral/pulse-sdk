@@ -1,6 +1,7 @@
 // Feedback widget — floating button that opens a two-column form panel.
 // Left column is the screenshot canvas (empty-state dashed dropzone, or the
-// captured thumb); right column carries title / description / type / priority.
+// captured thumb); right column carries an optional topic picker, then
+// title / description / type / priority.
 // Clicking the dropzone triggers the browser's share-tab prompt and opens
 // the annotation overlay. Submitting POSTs a multipart form to the configured
 // hi_pulse_server's `POST /api/v1/events` with the (optional) annotated
@@ -41,9 +42,16 @@ const T = {
   panelTitle: "New feedback",
   fieldTitle: "Title",
   fieldDescription: "Description",
+  fieldTopic: "Topic",
   fieldType: "Type",
   fieldPriority: "Priority",
   fieldScreenshot: "Screenshot",
+  // Optional topic picker, off by default. Each entry renders as a
+  // segment button and the reporter must pick one before sending; the key
+  // ships as `topic` and the server attaches the Linear label of that name.
+  //   T.topic = { app: { label: "App", sub: "Editor, controls" } }
+  topic: {},
+  topicMissing: "Please pick a topic",
   type: {
     bug: "Bug",
     suggestion: "Suggestion",
@@ -114,7 +122,13 @@ export const PulseWidgetHook = {
     // by the time the user clicks Feedback the fetch has almost
     // certainly resolved.
     this.config = { types: DEFAULT_TYPES, priorities: DEFAULT_PRIORITIES };
-    this.state = { type: this.config.types[0], priority: defaultPriority(this.config.priorities) };
+    // Topic has no default: when the host defines topics, the reporter
+    // must pick one explicitly.
+    this.state = {
+      type: this.config.types[0],
+      topic: null,
+      priority: defaultPriority(this.config.priorities),
+    };
     this.corner = this._loadCorner();
     this._initTooltipEl();
     this._buildFab();
@@ -362,6 +376,16 @@ export const PulseWidgetHook = {
             <h3>${T.panelTitle}</h3>
           </header>
           <div class="fb-panel-body">
+            ${
+              topicKeys().length
+                ? `<div class="fb-field">
+              <span class="fb-section-label">${T.fieldTopic}</span>
+              <div class="fb-topic-seg" data-group="topic" role="radiogroup" aria-label="${T.fieldTopic}">
+                ${topicKeys().map((key) => topicBtn(key, key === this.state.topic)).join("")}
+              </div>
+            </div>`
+                : ""
+            }
             <input name="title" type="text" class="fb-input" required maxlength="200" placeholder="${T.titlePlaceholder}" />
             <textarea name="description" class="fb-textarea" rows="3" maxlength="10000" placeholder="${T.descriptionPlaceholder}"></textarea>
             <div class="fb-field">
@@ -405,6 +429,26 @@ export const PulseWidgetHook = {
         chipEl.classList.add("active");
         const key = group.dataset.group;
         this.state[key] = chipEl.dataset.value;
+      });
+    });
+
+    panel.querySelectorAll(".fb-topic-seg").forEach((group) => {
+      group.addEventListener("click", (e) => {
+        const btn = e.target.closest(".fb-topic-btn");
+        if (!btn) return;
+        group.querySelectorAll(".fb-topic-btn").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-checked", "false");
+        });
+        btn.classList.add("active");
+        btn.setAttribute("aria-checked", "true");
+        this.state.topic = btn.dataset.value;
+        // Picking clears the "missing" hint so the reporter sees the gate lift.
+        const error = this.formPanel?.querySelector(".fb-error");
+        if (error && !error.hidden && error.dataset.kind === "topic") {
+          error.hidden = true;
+          error.dataset.kind = "";
+        }
       });
     });
 
@@ -707,6 +751,24 @@ export const PulseWidgetHook = {
       return;
     }
 
+    if (topicKeys().length && !topicKeys().includes(this.state.topic)) {
+      const error = this.formPanel.querySelector(".fb-error");
+      if (error) {
+        error.textContent = T.topicMissing;
+        error.dataset.kind = "topic";
+        error.hidden = false;
+      }
+      const seg = this.formPanel.querySelector(".fb-topic-seg");
+      if (seg) {
+        seg.classList.remove("fb-shake");
+        // Force a reflow so the same class re-triggers the keyframes.
+        void seg.offsetWidth;
+        seg.classList.add("fb-shake");
+        seg.querySelector(".fb-topic-btn")?.focus();
+      }
+      return;
+    }
+
     if (!this.config.priorities.includes(this.state.priority)) {
       this.state.priority = defaultPriority(this.config.priorities);
     }
@@ -721,6 +783,7 @@ export const PulseWidgetHook = {
       title: form.title.value.trim(),
       description: form.description.value.trim() || null,
       type: this.state.type,
+      topic: topicKeys().length ? this.state.topic : null,
       priority: this.state.priority,
       url: window.location.href,
       viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -978,6 +1041,21 @@ function titleize(key) {
   return key
     .replace(/[-_]+/g, " ")
     .replace(/^./, (c) => c.toUpperCase());
+}
+
+function topicKeys() {
+  return Object.keys(T.topic || {});
+}
+
+function topicBtn(value, active = false) {
+  // Mirrors the chip role contract: the radiogroup parent owns aria-label,
+  // each button is a radio. `sub` is an optional second line.
+  const t = T.topic[value] || {};
+  const label = t.label || value;
+  return `<button type="button" class="fb-topic-btn${active ? " active" : ""}" data-value="${value}" role="radio" aria-checked="${active}">
+      <span class="fb-topic-label-row"><span class="fb-topic-marker" aria-hidden="true"></span>${label}</span>
+      ${t.sub ? `<span class="fb-topic-sub">${t.sub}</span>` : ""}
+    </button>`;
 }
 
 function typeLabel(key) {

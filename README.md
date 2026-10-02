@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.1.5"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.1.6"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -76,7 +76,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.1.5"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.1.6"}
   ]
 end
 ```
@@ -186,6 +186,25 @@ T.send = "Submit";
 ```
 
 The default copy is English; ship your own translations the same way.
+
+## Add a topic picker
+
+Off by default. When `T.topic` has entries, the panel shows them as a
+segmented control above the title, and the reporter must pick one before
+sending. The chosen key ships as `topic`; when the project sends the issue
+to Linear, the server attaches the workspace label with that name (if one
+exists).
+
+```js
+T.fieldTopic = "What is it about?";
+T.topicMissing = "Please pick a topic";
+T.topic = {
+  "funnel-generator": { label: "Funnel generator", sub: "Generated copy, order, images" },
+  app: { label: "App", sub: "Editor, controls, block design" },
+};
+```
+
+`sub` is optional.
 
 ## Customize who sees the widget
 
