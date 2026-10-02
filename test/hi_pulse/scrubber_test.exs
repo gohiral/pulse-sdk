@@ -80,6 +80,86 @@ defmodule HiPulse.ScrubberTest do
       assert out == %{role: "admin"}
     end
 
+    test "redacts sensitive keys at every level, keeps their names" do
+      out =
+        Scrubber.scrub_metadata(%{
+          request: %{user_id: 7, api_key: "NESTED_SECRET", inner: %{"Token" => "DEEP_SECRET"}},
+          headers: [{"authorization", "HEADER_SECRET"}, {"accept", "text/html"}],
+          opts: [password: "KEYWORD_SECRET", retries: 3]
+        })
+
+      assert out.request.user_id == 7
+      assert out.request.api_key == "[REDACTED]"
+      assert out.request.inner == %{"Token" => "[REDACTED]"}
+      assert out.headers == [["authorization", "[REDACTED]"], ["accept", "text/html"]]
+      assert out.opts == [[:password, "[REDACTED]"], [:retries, 3]]
+    end
+
+    test "tuples and structs are scrubbed, not inspected" do
+      out =
+        Scrubber.scrub_metadata(%{
+          request: {:credentials, %{token: "TUPLE_SECRET"}},
+          error: %RuntimeError{message: "oops token: \"EXC_SECRET\""},
+          uri: URI.parse("https://example.com/path")
+        })
+
+      assert out.request == [:credentials, %{token: "[REDACTED]"}]
+      assert out.error == ~s(oops token: "[REDACTED]")
+      assert out.uri.host == "example.com"
+    end
+
+    test "a Plug.Conn is reduced to what identifies the request" do
+      conn = %{
+        __struct__: Plug.Conn,
+        method: "GET",
+        host: "example.com",
+        request_path: "/x",
+        status: 500,
+        req_cookies: %{"_app_key" => "COOKIE_SECRET"},
+        secret_key_base: "SKB_SECRET"
+      }
+
+      out = Scrubber.scrub_metadata(%{conn: conn})
+
+      assert out.conn == %{method: "GET", host: "example.com", request_path: "/x", status: 500}
+    end
+
+    test "strings get the stack scrubber's text redaction" do
+      out =
+        Scrubber.scrub_metadata(%{last_message: "call with Bearer abc.def and token: \"STR\""})
+
+      assert out.last_message =~ "Bearer [REDACTED]"
+      refute out.last_message =~ "abc.def"
+      refute out.last_message =~ "STR"
+    end
+
+    test "output is JSON-encodable for opaque runtime terms" do
+      out =
+        Scrubber.scrub_metadata(%{
+          {:tuple, :key} => 1,
+          pid: self(),
+          ref: make_ref(),
+          fun: fn -> :ok end,
+          at: ~U[2026-10-02 12:00:00Z],
+          raw: <<255, 0>>,
+          improper: [1 | 2]
+        })
+
+      assert {:ok, _} = Jason.encode(out)
+      assert out.pid =~ "#PID<"
+      assert out.at == "2026-10-02 12:00:00Z"
+      assert out.raw == "[binary]"
+      assert out.improper == "[improper list]"
+    end
+
+    test "caps nesting depth and collection size" do
+      deep = Enum.reduce(1..10, "leaf", fn _, acc -> %{n: acc} end)
+      out = Scrubber.scrub_metadata(%{deep: deep, long: Enum.to_list(1..100)})
+
+      refute inspect(out) =~ "leaf"
+      assert length(out.long) == 50
+    end
+
     test "non-map input returns empty map" do
       assert Scrubber.scrub_metadata(nil) == %{}
       assert Scrubber.scrub_metadata("nope") == %{}

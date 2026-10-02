@@ -101,8 +101,9 @@ defmodule HiPulse.ErrorPayload do
 
   # `:logger` events carry plenty of internal book-keeping in `meta`
   # (gl, pid, mfa, file, line, etc.). We strip the noisy ones before
-  # the metadata becomes user-visible context.
-  @internal ~w(crash_reason gl pid mfa file line module function logger_formatter time)a
+  # the metadata becomes user-visible context. Crash reports also carry
+  # `report_cb` (a function) and `callers` (pids): noise, not context.
+  @internal ~w(crash_reason gl pid mfa file line module function logger_formatter time report_cb callers)a
   defp drop_internal(meta) when is_map(meta), do: Map.drop(meta, @internal)
   defp drop_internal(_), do: %{}
 

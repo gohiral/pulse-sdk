@@ -104,6 +104,24 @@ defmodule HiPulse.ErrorHandlerTest do
       assert payload["context"][:request_id] == "req-1"
       refute Map.has_key?(payload["context"], :authorization)
     end
+
+    test "crash-report metadata (report_cb, callers, nested secrets) still encodes" do
+      event =
+        build_event(%{
+          crash_reason: {%RuntimeError{message: "boom"}, []},
+          report_cb: &Function.identity/1,
+          callers: [self()],
+          state: {:conn, %{api_key: "STATE_SECRET", user_id: 7}}
+        })
+
+      payload = ErrorPayload.from_logger_event(event)
+
+      refute Map.has_key?(payload["context"], :report_cb)
+      refute Map.has_key?(payload["context"], :callers)
+      assert {:ok, json} = Jason.encode(payload)
+      refute json =~ "STATE_SECRET"
+      assert json =~ "user_id"
+    end
   end
 
   describe "log/2 — dispatch reaches the task supervisor" do
