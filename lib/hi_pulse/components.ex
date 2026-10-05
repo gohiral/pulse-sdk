@@ -63,11 +63,13 @@ defmodule HiPulse.Components do
 
     ~H"""
     <%= if @enabled? do %>
-      <script defer phx-track-static type="text/javascript" src={@vendor_path <> "/rrweb.min.js"}>
+      <%!-- Not phx-track-static: the host serves these from the SDK's priv,
+           outside its digest manifest, so LiveView's static_changed?/1 would
+           report every page as stale and show the host's reload prompt. --%>
+      <script defer type="text/javascript" src={@vendor_path <> "/rrweb.min.js"}>
       </script>
       <script
         defer
-        phx-track-static
         type="text/javascript"
         src={@vendor_path <> "/rrweb-plugin-console-record.min.js"}
       >

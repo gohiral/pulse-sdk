@@ -38,6 +38,9 @@ defmodule HiPulse.ComponentsTest do
       assert html =~ ~s(id="hi-pulse-widget")
       assert html =~ "/assets/vendor/hi_pulse/rrweb.min.js"
       assert html =~ "/assets/vendor/hi_pulse/rrweb-plugin-console-record.min.js"
+      # Tracked statics outside the host's digest manifest make LiveView's
+      # static_changed?/1 true on every mount (host apps show a reload prompt).
+      refute html =~ "phx-track-static"
 
       # Reporter and context are JSON-encoded into data attributes so the
       # JS hook can `JSON.parse(...)` them on mount.
