@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.1"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.4.0"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.1"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.4.0"}
   ]
 end
 ```
@@ -258,8 +258,13 @@ Reporters see what happened to their feedback inside your app: status
 changes from Linear, notes and questions from the team, and the moment
 the fix is live. They answer questions and confirm the fix ("Works now" /
 "Still broken") from the same panel; both land on the Linear issue as
-comments. A smiley on each team message puts an emoji on it (👍 🙌 🎉 🙏
-👀), and the team's reactions show on the reporter's own messages. A
+comments. A question and its answer read as one thread: an open question
+carries its own answer field, and the answer then hangs under it. The
+reporter puts emoji on the team's messages: an add chip on each one opens
+a picker with 👍 🙏 🎉 👀 and "…", which searches a grid in English and
+German or takes any emoji typed or pasted. Several emoji per message work;
+clicking your own chip takes it back. The team's reactions show as chips
+on the reporter's own messages, with who reacted on hover. A
 new team reaction also shows on the floating button for 5 seconds,
 instead of a dot. Reactions only show in the widget and in pulse. After "Works now" the fix step keeps a "Still broken after
 all? Reopen" link, so a fix that breaks again can still be reopened. Feedback only: automatically captured errors have no reporter.
@@ -358,10 +363,21 @@ sign-in redirect, as long as the app keeps the query in its return path.
 
 The new strings live on `T` with the rest (see "Customize copy"):
 `T.status`, `T.stepHint`, `T.peekFixed`, `T.releaseNote`, `T.time` and
-friends; reactions add `T.react`, `T.reactions`, `T.yourReaction`,
-`T.reactedBy`, `T.team`, `T.reactFailed` and `T.fabReaction` (0.3.0). `{title}`, `{count}`,
-`{n}`, `{date}`, `{emoji}` and `{name}` are filled in at runtime; keep them
-when translating. `T.locale` (default `"en-GB"`)
+friends; reactions add `T.react`, `T.reactions`, `T.team`,
+`T.reactFailed` and `T.fabReaction` (0.3.0).
+Question threads (0.3.2) add `T.answerLabel`, `T.answerFieldHint`,
+`T.sendAnswer`, `T.answerHint`, `T.yourAnswer` and `T.aboutYourAnswer`.
+The emoji picker (0.4.0) adds `T.addReaction` ("Add a reaction"),
+`T.reactWith` ("React with {emoji}"), `T.removeReaction` ("Remove your
+reaction {emoji}"), `T.reactionFrom` ("Reaction from {name}"; `{name}`
+lists who reacted in `T.locale`, "Nico and Marc"), `T.moreEmoji` ("More
+emoji"), `T.emojiSearch` ("Search, or type any emoji"), `T.emojiHint`,
+`T.emojiNoMatch` and `T.emojiEnter` ("Press Enter to react with
+{emoji}"); `T.yourReaction` and `T.reactedBy` are gone. The search
+matches the grid's built-in English and German keywords, whatever the
+copy says.
+`{title}`, `{count}`, `{n}`, `{date}`, `{emoji}`, `{name}`, `{time}` and
+`{answer}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
 formats dates like "2 Oct".
 
 ## Automatic error capture

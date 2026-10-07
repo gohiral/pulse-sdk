@@ -205,9 +205,91 @@ function signature(report) {
 // Reactions
 // ---------------------------------------------------------------------------
 
-// The emoji the reporter can put on a team message, in tray order. The
-// server accepts exactly these (`Step.reactions/0`).
-export const REACTIONS = ["👍", "🙌", "🎉", "🙏", "👀"];
+// The picker's one-click emoji, in order.
+export const QUICK_REACTIONS = ["👍", "🙏", "🎉", "👀"];
+
+// The picker's grid behind "…": each emoji with English and German
+// keywords to search by. Any other emoji can be typed or pasted.
+export const EMOJI = [
+  ["👍", "thumbs up yes ok daumen hoch ja gut"],
+  ["👎", "thumbs down no daumen runter nein"],
+  ["🙏", "thanks please pray danke bitte"],
+  ["🎉", "party tada congrats feier glückwunsch"],
+  ["👀", "eyes looking checking augen schaue nach"],
+  ["✅", "check done yes erledigt fertig haken"],
+  ["❤️", "heart love herz liebe"],
+  ["😂", "laugh joy lol lachen"],
+  ["😀", "grin happy smile grinsen fröhlich"],
+  ["🙂", "smile lächeln"],
+  ["😊", "blush happy freude"],
+  ["😍", "love eyes verliebt"],
+  ["🤔", "thinking hmm nachdenken überlegen"],
+  ["😅", "sweat phew puh schweiß"],
+  ["😬", "grimace oops hoppla"],
+  ["😮", "wow surprised überrascht"],
+  ["😢", "sad cry traurig weinen"],
+  ["🙃", "upside down kopfüber ironie"],
+  ["😎", "cool lässig"],
+  ["🥳", "celebrate party feiern"],
+  ["😴", "sleep tired schlafen müde"],
+  ["🤷", "shrug dunno keine ahnung schulterzucken"],
+  ["🤞", "fingers crossed hope daumen drücken hoffen"],
+  ["👏", "clap applause klatschen applaus"],
+  ["🙌", "hooray raised hands hurra"],
+  ["💪", "strong flex stark"],
+  ["👋", "wave hi hello bye winken hallo tschüss"],
+  ["🤝", "handshake deal abgemacht"],
+  ["👌", "ok perfect perfekt"],
+  ["🫡", "salute salut zu befehl"],
+  ["💯", "hundred perfect hundert"],
+  ["🔥", "fire hot feuer heiß"],
+  ["🚀", "rocket ship launch rakete start"],
+  ["⭐", "star stern"],
+  ["💡", "idea bulb idee glühbirne"],
+  ["🐛", "bug fehler käfer"],
+  ["🛠️", "tools fix wrench werkzeug reparieren"],
+  ["🔍", "search magnifier suche lupe"],
+  ["📌", "pin stecknadel merken"],
+  ["⏳", "waiting hourglass warten sanduhr"],
+  ["☕", "coffee kaffee"],
+  ["🍀", "luck clover glück kleeblatt"],
+  ["❓", "question frage"],
+  ["❗", "exclamation important wichtig ausrufezeichen"],
+  ["⚠️", "warning warnung achtung"],
+  ["❌", "cross no wrong nein falsch"],
+  ["➕", "plus add dazu"],
+  ["🎯", "target bullseye ziel treffer"],
+];
+
+// The grid's emoji whose keywords contain `query` (all of them for an
+// empty one). Case-insensitive.
+export function filterEmoji(query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  return EMOJI.filter(([, keywords]) => !q || keywords.includes(q)).map(([emoji]) => emoji);
+}
+
+// One emoji as the server accepts it (`ReporterUpdates.Emoji`): a
+// pictograph with its variation selectors, skin tones, tags and
+// zero-width-joined parts, a keycap, or a flag; at most 32 bytes.
+const ONE_EMOJI =
+  /^(?:\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0E\uFE0F\u200D\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]*|[0-9#*]\uFE0F?\u20E3|\p{Regional_Indicator}{2})$/u;
+// Splits text into candidates where Intl.Segmenter is missing.
+const EMOJI_RUN =
+  /\p{Extended_Pictographic}[\p{Extended_Pictographic}\uFE0E\uFE0F\u200D\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]*|[0-9#*]\uFE0F?\u20E3|\p{Regional_Indicator}{2}/gu;
+
+function isOneEmoji(text) {
+  return ONE_EMOJI.test(text) && new TextEncoder().encode(text).length <= 32;
+}
+
+// The first emoji in typed or pasted text ("ok 🦄" → "🦄"), or null.
+export function firstEmoji(text) {
+  const value = String(text ?? "");
+  const parts =
+    typeof Intl !== "undefined" && Intl.Segmenter
+      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value), (s) => s.segment)
+      : value.match(EMOJI_RUN) || [];
+  return parts.find(isOneEmoji) || null;
+}
 
 // The reporter reacts to the team's notes and questions; the team reacts
 // to the reporter's replies and verdicts on its side.
@@ -215,37 +297,69 @@ export function canReact(step) {
   return step?.author === "team" && (step.kind === "note" || step.kind === "question");
 }
 
-// Picking the emoji that is already there takes it back.
-export function nextReaction(step, emoji) {
-  return step?.reaction?.emoji === emoji ? null : emoji;
+// The other side's emoji on a step, `[{emoji, author, author_name, at}]`
+// (docs/http-api.md § Step). A server before several reactions sends only
+// `reaction`, always from the other side of the step's author.
+export function stepReactions(step) {
+  if (Array.isArray(step?.reactions)) return step.reactions;
+  const legacy = step?.reaction;
+  if (!legacy?.emoji) return [];
+  const author = step.author === "team" ? "reporter" : "team";
+  return [{ emoji: legacy.emoji, author, author_name: legacy.author_name ?? null, at: legacy.at }];
 }
 
-// The report with `emoji` (or none) on step `stepId`, shown at once
-// while the server confirms.
-export function withReaction(report, stepId, emoji, at = new Date().toISOString()) {
+// A step's reactions as chips: one per emoji, in the order each was first
+// put on, with who put it there. `mine` marks the reporter's own.
+export function reactionGroups(step) {
+  const groups = [];
+  for (const r of stepReactions(step)) {
+    let group = groups.find((g) => g.emoji === r.emoji);
+    if (!group) groups.push((group = { emoji: r.emoji, count: 0, mine: false, names: [] }));
+    group.count += 1;
+    if (r.author === "reporter") group.mine = true;
+    else group.names.push(r.author_name);
+  }
+  return groups;
+}
+
+// The reporter's `emoji` put on, or taken off when it is already there.
+export function toggleReaction(reactions, emoji, at = new Date().toISOString()) {
+  const list = reactions || [];
+  const mine = (r) => r.author === "reporter" && r.emoji === emoji;
+  return list.some(mine)
+    ? list.filter((r) => !mine(r))
+    : [...list, { emoji, author: "reporter", author_name: null, at }];
+}
+
+// The report with `reactions` on step `stepId`, shown at once while the
+// server confirms (and put back if it refuses).
+export function withReactions(report, stepId, reactions) {
   return {
     ...report,
-    steps: (report.steps || []).map((s) =>
-      s.id === stepId ? { ...s, reaction: emoji ? { emoji, author_name: null, at } : null } : s,
-    ),
+    steps: (report.steps || []).map((s) => (s.id === stepId ? { ...s, reactions } : s)),
   };
 }
 
 // The team's reactions on the reporter's own messages, as
 // `{key, reportId, stepId, emoji, by, at}` (`by` is the team member's name). `key` changes when the team
 // reacts again, so a new emoji plays even on the same message; it holds
-// the emoji too, since `at` is in whole seconds.
+// the emoji too, since `at` is in whole seconds. A second person putting
+// the same emoji on in the same second gets their name in the key; the
+// first keeps the plain key the widgets before 0.4.0 stored.
 export function teamReactions(report) {
   return (report?.steps || [])
-    .filter((s) => s.author === "reporter" && s.reaction?.emoji)
-    .map((s) => ({
-      key: `${s.id}|${s.reaction.at}|${s.reaction.emoji}`,
-      reportId: report.id,
-      stepId: s.id,
-      emoji: s.reaction.emoji,
-      by: s.reaction.author_name,
-      at: s.reaction.at,
-    }));
+    .filter((s) => s.author === "reporter")
+    .flatMap((s) => {
+      const seen = new Set();
+      return stepReactions(s)
+        .filter((r) => r.author === "team" && r.emoji)
+        .map((r) => {
+          const base = `${s.id}|${r.at}|${r.emoji}`;
+          const key = seen.has(base) ? `${base}|${r.author_name}` : base;
+          seen.add(base);
+          return { key, reportId: report.id, stepId: s.id, emoji: r.emoji, by: r.author_name, at: r.at };
+        });
+    });
 }
 
 // Team reactions in `next` that weren't in `prev` (a live push).
@@ -272,10 +386,19 @@ export function latestTeamMessage(report) {
 // Timeline
 // ---------------------------------------------------------------------------
 
-// Builds the Variant 3 timeline: one node per status change or question,
-// with notes, replies and verdicts as bubbles on the node they followed,
-// then hollow "todo" nodes for the statuses still ahead. Each node:
-// `{key, status, question, at, state: "done" | "now" | "todo", stepIds, bubbles}`.
+// Builds the Variant 3 timeline: one node per status change or question
+// thread, with notes, free replies and verdicts as bubbles on the node
+// they followed, then hollow "todo" nodes for the statuses still ahead.
+// Each node:
+// `{key, status, question, at, state: "done" | "now" | "todo", stepIds,
+//   bubbles, questions, answers, follows, open}`.
+//
+// A question node is a thread: `questions` holds the team's question(s),
+// `answers` the reporter's replies that answer one of them (a reply's
+// `answers` names the question). Questions asked before an answer join
+// one thread; an answer, a status change or a follow-up starts the next.
+// `follows` is `{question, answer}` for a follow-up: the earlier question
+// and its answer. `open` marks the thread still waiting for an answer.
 export function timeline(report) {
   const nodes = [];
   const node = (key, status, at, extra = {}) => ({
@@ -286,18 +409,41 @@ export function timeline(report) {
     state: "done",
     stepIds: [],
     bubbles: [],
+    questions: [],
+    answers: [],
+    follows: null,
+    open: false,
     ...extra,
   });
+  // Question id → its thread; `run` is the thread new questions join.
+  const threads = new Map();
+  let run = null;
 
   for (const step of report.steps || []) {
     if (step.kind === "status") {
       // The question node already shows "needs info".
       if (step.status === "needs_info") continue;
       nodes.push(node(step.id, step.status, step.at, { stepIds: [step.id] }));
+      run = null;
     } else if (step.kind === "question") {
-      nodes.push(
-        node(step.id, "needs_info", step.at, { question: true, stepIds: [step.id], bubbles: [step] }),
-      );
+      if (run && !step.follows) {
+        run.questions.push(step);
+        run.stepIds.push(step.id);
+      } else {
+        run = node(step.id, "needs_info", step.at, {
+          question: true,
+          stepIds: [step.id],
+          questions: [step],
+          follows: followed(threads, step.follows),
+        });
+        nodes.push(run);
+      }
+      threads.set(step.id, run);
+    } else if (step.kind === "reply" && threads.has(step.answers)) {
+      const thread = threads.get(step.answers);
+      thread.answers.push(step);
+      thread.stepIds.push(step.id);
+      if (thread === run) run = null;
     } else {
       if (nodes.length === 0) nodes.push(node("received", "received", report.reported_at));
       const last = nodes[nodes.length - 1];
@@ -306,6 +452,7 @@ export function timeline(report) {
     }
   }
 
+  if (run && report.status === "needs_info") run.open = true;
   if (nodes.length === 0) nodes.push(node("received", "received", report.reported_at));
   // The server may clear a status without its own step (a reply ends
   // "needs info"); show where the report stands now regardless.
@@ -321,6 +468,25 @@ export function timeline(report) {
     }
   }
   return nodes;
+}
+
+// The question a follow-up refers to and the answer it got, or null.
+function followed(threads, questionId) {
+  const thread = questionId ? threads.get(questionId) : null;
+  if (!thread) return null;
+  const question = thread.questions.find((q) => q.id === questionId);
+  return { question, answer: thread.answers[0] || null };
+}
+
+// The question thread waiting for the reporter's answer, or null.
+export function openQuestion(nodes) {
+  return (nodes || []).find((n) => n.open) || null;
+}
+
+// "A long answer" → "A long ans…": one line of at most `max` characters.
+export function clip(text, max) {
+  const line = String(text ?? "").replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 // The fixed node "Works now" / "Still broken" belongs to, or null when the

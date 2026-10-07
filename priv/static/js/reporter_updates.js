@@ -15,10 +15,14 @@
 
 import { Socket } from "phoenix";
 import {
-  REACTIONS,
+  EMOJI,
+  QUICK_REACTIONS,
   canReact,
+  clip,
   dotStatus,
   escapeHTML,
+  filterEmoji,
+  firstEmoji,
   fmt,
   formatDate,
   freshTeamReactions,
@@ -30,21 +34,24 @@ import {
   latestTeamMessage,
   livePeek,
   mergePeek,
-  nextReaction,
+  openQuestion,
+  reactionGroups,
   readDeepLink,
   stripDeepLink,
   relativeTime,
   resolvePeek,
   socketUrl,
   sortReports,
+  stepReactions,
   timeline,
+  toggleReaction,
   unseenCount,
   unseenSteps,
   unshownTeamReactions,
   upsertReport,
   verdictNodeKey,
   withoutStep,
-  withReaction,
+  withReactions,
   withStep,
   changedReports,
 } from "./reporter_view.js";
@@ -77,9 +84,14 @@ export class ReporterUpdates {
     this.view = null;
     this.newStepIds = new Set();
     this.drafts = new Map();
+    // Drafts of the answer field inside an open question, by report id.
+    this.answerDrafts = new Map();
+    // The answer field last scrolled into view ("<report id>|<question id>").
+    this.revealedAnswer = null;
     this.verdict = null;
-    // The team message whose reaction tray is open.
-    this.reacting = null;
+    // The emoji picker, open on one team message:
+    // `{stepId, more, query}` ("…" expanded, the search text).
+    this.picking = null;
     this.pendingPeek = null;
     this.shownPeek = null;
     this.releaseTitles = new Set();
@@ -107,6 +119,10 @@ export class ReporterUpdates {
     this._listen(window, "focus", () => this._onAttention());
     this._listen(window, "blur", () => this._onAttention());
     this._listen(document, "keydown", (e) => this._onKeydown(e));
+    // A click anywhere outside the open picker closes it.
+    this._listen(document, "click", (e) => {
+      if (this.picking && !e.target.closest(".fb-pick, [data-action='rx-open']")) this._closePicker(false);
+    });
     this._connect(serverUrl, token, reporterToken);
   }
 
@@ -597,7 +613,7 @@ export class ReporterUpdates {
     this._saveDraft();
     this.newStepIds = new Set(unseenSteps(report).map((s) => s.id));
     this.verdict = null;
-    this.reacting = null;
+    this.picking = null;
     this.pulseNow = true;
     this._consumeReactions(report);
     this._openPanel({ name: "report", id }, { focusReply });
@@ -614,7 +630,7 @@ export class ReporterUpdates {
     this.panel = null;
     this.view = null;
     this.verdict = null;
-    this.reacting = null;
+    this.picking = null;
     this.newStepIds.clear();
     this.fab.setAttribute("aria-expanded", "false");
     const back = this.returnFocus;
@@ -676,6 +692,7 @@ export class ReporterUpdates {
           <textarea class="fb-textarea" name="body" rows="1" maxlength="5000"></textarea>
           <button type="submit" class="fb-btn-primary">${escapeHTML(T.send)}</button>
         </form>
+        <p class="fb-rp-foot" hidden>${escapeHTML(T.answerHint)}</p>
       </div>`;
     panel.addEventListener("click", (e) => this._onPanelClick(e));
     const form = panel.querySelector(".fb-rp-reply");
@@ -694,6 +711,37 @@ export class ReporterUpdates {
         e.preventDefault();
         this._sendVerdict(false);
       }
+      // The picker's search: Enter reacts with the emoji typed, or the
+      // first one found.
+      if (e.target.matches(".fb-pick-search") && e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        const emoji = firstEmoji(e.target.value) || filterEmoji(e.target.value)[0];
+        if (emoji && this.picking) this._react(this.picking.stepId, emoji);
+      }
+      // The answer field takes several lines: Cmd/Ctrl+Enter sends.
+      if (e.target.matches(".fb-answer-input") && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
+        e.preventDefault();
+        this._sendAnswer();
+      }
+    });
+    // The answer field lives in the re-rendered timeline: its draft is
+    // kept here so live pushes don't wipe it.
+    panel.addEventListener("input", (e) => {
+      if (e.target.matches(".fb-pick-search") && this.picking) {
+        this.picking.query = e.target.value;
+        return this._filterPicker();
+      }
+      if (!e.target.matches(".fb-answer-input") || this.view?.name !== "report") return;
+      const value = e.target.value;
+      if (value.trim()) this.answerDrafts.set(this.view.id, value);
+      else this.answerDrafts.delete(this.view.id);
+      const send = e.target.closest(".fb-answer-form")?.querySelector("[type='submit']");
+      if (send) send.disabled = !value.trim();
+    });
+    panel.addEventListener("submit", (e) => {
+      if (!e.target.matches(".fb-answer-form")) return;
+      e.preventDefault();
+      this._sendAnswer();
     });
     this.returnFocus = document.activeElement;
     document.body.appendChild(panel);
@@ -704,8 +752,9 @@ export class ReporterUpdates {
   _onKeydown(e) {
     if (e.key !== "Escape") return;
     if (this.panel) {
-      if (this.reacting) {
-        this._closeTray();
+      if (this.picking) {
+        e.preventDefault();
+        this._closePicker();
       } else if (this.verdict?.mode === "detail") {
         this.verdict = null;
         this._renderPanel();
@@ -723,15 +772,13 @@ export class ReporterUpdates {
     if (rowEl) return this.openReport(rowEl.dataset.reportId);
     const target = e.target.closest("[data-action]");
     const action = target?.dataset.action;
-    // Any other click puts an open reaction tray away.
-    if (this.reacting && action !== "react" && action !== "react-open") this._closeTray(false);
     switch (action) {
       case "close":
         return this.closePanel();
       case "back":
         this._saveDraft();
         this.verdict = null;
-        this.reacting = null;
+        this.picking = null;
         this.view = { name: "list" };
         this._renderPanel({ fresh: true });
         return this._focusInitial(false);
@@ -748,9 +795,12 @@ export class ReporterUpdates {
       case "broken-cancel":
         this.verdict = null;
         return this._renderPanel();
-      case "react-open":
-        return this._toggleTray(target.dataset.stepId);
-      case "react":
+      case "rx-open":
+        return this._togglePicker(target.dataset.stepId);
+      case "rx-more":
+        return this._expandPicker();
+      case "rx":
+      case "rx-pick":
         return this._react(target.dataset.stepId, target.dataset.emoji);
     }
   }
@@ -761,7 +811,9 @@ export class ReporterUpdates {
     const selectors =
       this.view.name === "list"
         ? ["[data-report-id]", "[data-action='new-report']"]
-        : [focusReply ? ".fb-rp-reply textarea" : "[data-action='back']"];
+        : focusReply
+          ? [".fb-answer-input", ".fb-rp-reply:not([hidden]) textarea"]
+          : ["[data-action='back']"];
     const target = selectors.map((sel) => this.panel.querySelector(sel)).find(Boolean);
     target?.focus({ preventScroll: true });
   }
@@ -774,8 +826,11 @@ export class ReporterUpdates {
     const active = document.activeElement;
     const focusKey = this.panel.contains(active) ? focusSelector(active) : null;
     const detail = this.panel.querySelector(".fb-verdict-detail")?.value;
+    const caret =
+      focusKey && active.matches(".fb-answer-input, .fb-pick-search") ? [active.selectionStart, active.selectionEnd] : null;
     const report = this.view.name === "report" ? this._report(this.view.id) : null;
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+    if (fresh) this.revealedAnswer = null;
 
     if (report) {
       this._renderReport(report, fresh);
@@ -788,9 +843,31 @@ export class ReporterUpdates {
       const field = this.panel.querySelector(".fb-verdict-detail");
       if (field) field.value = detail;
     }
-    if (focusKey) this.panel.querySelector(focusKey)?.focus({ preventScroll: true });
+    if (focusKey) {
+      const el = this.panel.querySelector(focusKey);
+      el?.focus({ preventScroll: true });
+      if (caret && el?.setSelectionRange) el.setSelectionRange(...caret);
+    }
     if (report && (fresh || nearBottom)) body.scrollTop = body.scrollHeight;
     else if (fresh) body.scrollTop = 0;
+    if (report) this._revealAnswer(report, body);
+    this._placePicker();
+  }
+
+  // A question that just arrived (or a timeline opening on one) brings
+  // its answer field into view, once.
+  _revealAnswer(report, body) {
+    const form = body.querySelector(".fb-answer-form");
+    const key = form ? `${report.id}|${form.dataset.questionId}` : null;
+    if (!form || key === this.revealedAnswer) {
+      this.revealedAnswer = key;
+      return;
+    }
+    this.revealedAnswer = key;
+    const view = body.getBoundingClientRect();
+    const field = form.getBoundingClientRect();
+    if (field.bottom > view.bottom - 12) body.scrollTop += field.bottom - view.bottom + 12;
+    else if (field.top < view.top) body.scrollTop -= view.top - field.top + 12;
   }
 
   _renderHead(left) {
@@ -807,6 +884,7 @@ export class ReporterUpdates {
     const now = Date.now();
     this._renderHead(`<h3 class="fb-rp-title">${escapeHTML(T.yourReports)}</h3>`);
     this.panel.querySelector(".fb-rp-reply").hidden = true;
+    this.panel.querySelector(".fb-rp-foot").hidden = true;
     const rows = this.reports.map((report) => {
       const unread = hasUpdate(report);
       const message = latestTeamMessage(report);
@@ -855,8 +933,12 @@ export class ReporterUpdates {
       </ol>`;
     this.pulseNow = false;
 
+    // While a question waits, it is answered in its own field; the bottom
+    // field (and its draft) comes back once it is answered.
+    const open = openQuestion(nodes);
     const form = this.panel.querySelector(".fb-rp-reply");
-    form.hidden = false;
+    form.hidden = Boolean(open);
+    this.panel.querySelector(".fb-rp-foot").hidden = !open;
     const placeholder = report.status === "needs_info" ? T.answerPlaceholder : T.replyPlaceholder;
     form.body.placeholder = placeholder;
     form.body.setAttribute("aria-label", placeholder);
@@ -882,6 +964,7 @@ export class ReporterUpdates {
         <div class="fb-step-main">
           <p class="fb-step-label">${escapeHTML(label)}${isNew ? `<span class="fb-new-tag">${escapeHTML(T.newTag)}</span>` : ""}</p>
           ${hint ? `<p class="fb-step-hint">${escapeHTML(hint)}</p>` : ""}
+          ${node.question ? this._threadHTML(node, report, now) : ""}
           ${node.bubbles.map((step) => this._bubbleHTML(step)).join("")}
           ${withVerdict ? this._verdictHTML(report) : ""}
         </div>
@@ -898,40 +981,111 @@ export class ReporterUpdates {
     return "";
   }
 
-  _bubbleHTML(step) {
+  // A question thread: what the follow-up refers to, the team's
+  // question(s), then the reporter's answer on a connector, or the field
+  // to answer it while it is open.
+  _threadHTML(node, report, now) {
     const { T } = this;
+    const parts = [];
+    if (node.follows?.answer) {
+      const about = fmt(T.aboutYourAnswer, { answer: clip(node.follows.answer.body, 40) });
+      parts.push(`<p class="fb-qa-ref">${replyIcon()}<span>${escapeHTML(about)}</span></p>`);
+    }
+    for (const question of node.questions) parts.push(this._bubbleHTML(question));
+    for (const answer of node.answers) {
+      const label = fmt(T.yourAnswer, { time: relativeTime(answer.at, now, T) });
+      parts.push(`
+        <div class="fb-answer">
+          <span class="fb-answer-label">${escapeHTML(label)}</span>
+          ${this._bubbleHTML(answer, { by: false })}
+        </div>`);
+    }
+    if (node.open) {
+      const draft = this.answerDrafts.get(report.id) || "";
+      const question = node.questions[node.questions.length - 1];
+      const id = `fb-answer-${escapeHTML(node.key)}`;
+      parts.push(`
+        <form class="fb-answer fb-answer-form" data-question-id="${escapeHTML(question.id)}" novalidate>
+          <label class="fb-answer-label" for="${id}">${escapeHTML(T.answerLabel)}</label>
+          <textarea id="${id}" class="fb-textarea fb-answer-input" rows="2" maxlength="5000" placeholder="${escapeHTML(T.answerPlaceholder)}">${escapeHTML(draft)}</textarea>
+          <div class="fb-answer-bar">
+            <span class="fb-answer-hint">${escapeHTML(T.answerFieldHint)}</span>
+            <button type="submit" class="fb-btn-primary fb-btn-sm"${draft.trim() ? "" : " disabled"}>${escapeHTML(T.sendAnswer)}</button>
+          </div>
+        </form>`);
+    }
+    return `<div class="fb-qa">${parts.join("")}</div>`;
+  }
+
+  // A message: its bubble, then the reactions on its bottom edge. The
+  // reporter's own bubbles are filled, the team's outlined. `by: false`
+  // drops the "You · " prefix where a label already says it.
+  _bubbleHTML(step, { by: showBy = true } = {}) {
+    const { T } = this;
+    let bubble;
     if (step.author === "reporter") {
       const text =
         step.kind === "verdict" ? (step.body === "works" ? T.worksNow : T.stillBroken) : step.body;
       const detail = step.kind === "verdict" && step.detail ? `<span class="fb-bubble-detail">${escapeHTML(step.detail)}</span>` : "";
-      // The team's emoji on the reporter's own message: shown, not changed.
-      const reaction = step.reaction
-        ? `<span class="fb-reaction" role="img" aria-label="${escapeHTML(fmt(T.reactedBy, { name: step.reaction.author_name || T.team, emoji: step.reaction.emoji }))}">${escapeHTML(step.reaction.emoji)}</span>`
-        : "";
-      return `<div class="fb-bubble fb-bubble-mine${step.pending ? " pending" : ""}${reaction ? " fb-has-reaction" : ""}"><span class="fb-bubble-by">${escapeHTML(T.you)} · </span>${escapeHTML(text)}${detail}${reaction}</div>`;
+      const prefix = showBy ? `<span class="fb-bubble-by">${escapeHTML(T.you)} · </span>` : "";
+      bubble = `<div class="fb-bubble fb-bubble-mine${step.pending ? " pending" : ""}">${prefix}${escapeHTML(text)}${detail}</div>`;
+    } else {
+      const by = step.author_name ? ` <span class="fb-bubble-by">${escapeHTML(step.author_name)}</span>` : "";
+      bubble = `<div class="fb-bubble">${escapeHTML(step.body)}${by}</div>`;
     }
-    const by = step.author_name ? ` <span class="fb-bubble-by">${escapeHTML(step.author_name)}</span>` : "";
-    if (!canReact(step)) return `<div class="fb-bubble">${escapeHTML(step.body)}${by}</div>`;
-    return `<div class="fb-bubble fb-has-reaction">${escapeHTML(step.body)}${by}${this._reactButtonHTML(step)}</div>${this.reacting === step.id ? this._trayHTML(step) : ""}`;
+    return `<div class="fb-msg">${bubble}${this._reactionsHTML(step)}</div>`;
   }
 
-  // The reaction slot on a team message's corner: the reporter's emoji,
-  // or a faint smiley (on hover, always on touch screens) to add one.
-  _reactButtonHTML(step) {
+  // Chips overlapping the bubble's bottom edge. On the team's notes and
+  // questions the reporter toggles theirs and adds more from the picker;
+  // the team's emoji on the reporter's own messages are read-only.
+  _reactionsHTML(step) {
     const { T } = this;
-    const emoji = step.reaction?.emoji;
-    const label = emoji ? fmt(T.yourReaction, { emoji }) : T.react;
-    const open = this.reacting === step.id;
-    return `<button type="button" class="fb-reaction${emoji ? "" : " fb-reaction-add"}" data-action="react-open" data-step-id="${escapeHTML(step.id)}" aria-label="${escapeHTML(label)}" aria-expanded="${open}">${emoji ? escapeHTML(emoji) : smileyIcon()}</button>`;
+    const groups = reactionGroups(step);
+    const mine = canReact(step);
+    if (!mine && groups.length === 0) return "";
+    const id = escapeHTML(step.id);
+    const chips = groups.map((g) => {
+      const emoji = escapeHTML(g.emoji);
+      const count = g.count > 1 ? `<span class="fb-rx-n">${g.count}</span>` : "";
+      const from = fmt(T.reactionFrom, { name: listNames(g.names.map((n) => n || T.team), T.locale) });
+      if (!mine) {
+        return `<span class="fb-rx fb-rx-ro" role="img" aria-label="${escapeHTML(`${g.emoji} ${from}`)}" title="${escapeHTML(from)}"><span class="fb-rx-e" aria-hidden="true">${emoji}</span>${count}</span>`;
+      }
+      const label = g.mine ? fmt(T.removeReaction, { emoji: g.emoji }) : `${g.emoji} ${from}`;
+      return `<button type="button" class="fb-rx${g.mine ? " on" : ""}" data-action="rx" data-step-id="${id}" data-emoji="${emoji}" aria-pressed="${g.mine}" aria-label="${escapeHTML(label)}" title="${escapeHTML(g.mine ? label : from)}"><span class="fb-rx-e" aria-hidden="true">${emoji}</span>${count}</button>`;
+    });
+    if (mine) {
+      const open = this.picking?.stepId === step.id;
+      chips.push(
+        `<button type="button" class="fb-rx fb-rx-add" data-action="rx-open" data-step-id="${id}" aria-expanded="${open}" aria-haspopup="dialog" aria-label="${escapeHTML(T.addReaction)}" title="${escapeHTML(T.addReaction)}">${smileyPlusIcon()}</button>`,
+      );
+      if (open) chips.push(this._pickerHTML(step));
+    }
+    return `<div class="fb-rxs" role="group" aria-label="${escapeHTML(T.reactions)}">${chips.join("")}</div>`;
   }
 
-  _trayHTML(step) {
+  // Four one-click emoji and "…", which opens a search over a grid; any
+  // emoji typed or pasted there works too.
+  _pickerHTML(step) {
     const { T } = this;
-    const buttons = REACTIONS.map(
-      (emoji) =>
-        `<button type="button" data-action="react" data-step-id="${escapeHTML(step.id)}" data-emoji="${escapeHTML(emoji)}" aria-pressed="${step.reaction?.emoji === emoji}">${escapeHTML(emoji)}</button>`,
-    ).join("");
-    return `<div class="fb-reaction-tray" role="group" aria-label="${escapeHTML(T.reactions)}">${buttons}</div>`;
+    const id = escapeHTML(step.id);
+    const mine = new Set(stepReactions(step).filter((r) => r.author === "reporter").map((r) => r.emoji));
+    const button = (emoji, cls = "") =>
+      `<button type="button" class="${[cls, mine.has(emoji) ? "on" : ""].filter(Boolean).join(" ")}" data-action="rx-pick" data-step-id="${id}" data-emoji="${escapeHTML(emoji)}" aria-pressed="${mine.has(emoji)}" aria-label="${escapeHTML(fmt(T.reactWith, { emoji }))}">${escapeHTML(emoji)}</button>`;
+    const { more } = this.picking;
+    const search = more
+      ? `<div class="fb-pick-x">
+          <input type="text" class="fb-pick-search" autocomplete="off" spellcheck="false" placeholder="${escapeHTML(T.emojiSearch)}" aria-label="${escapeHTML(T.emojiSearch)}" value="${escapeHTML(this.picking.query || "")}">
+          <div class="fb-pick-grid">${EMOJI.map(([emoji]) => button(emoji)).join("")}</div>
+          <p class="fb-pick-hint" aria-live="polite"></p>
+        </div>`
+      : "";
+    return `
+      <div class="fb-pick" role="dialog" aria-label="${escapeHTML(T.react)}">
+        <div class="fb-pick-q">${QUICK_REACTIONS.map((emoji) => button(emoji)).join("")}<button type="button" class="fb-pick-more" data-action="rx-more" aria-expanded="${more}" aria-label="${escapeHTML(T.moreEmoji)}" title="${escapeHTML(T.moreEmoji)}">${dotsIcon()}</button></div>
+        ${search}
+      </div>`;
   }
 
   _verdictHTML(report) {
@@ -965,53 +1119,91 @@ export class ReporterUpdates {
   // Reporter → team: replies and verdicts
   // ---------------------------------------------------------------------------
 
-  _toggleTray(stepId) {
-    this.reacting = this.reacting === stepId ? null : stepId;
+  _togglePicker(stepId) {
+    const opening = this.picking?.stepId !== stepId;
+    this.picking = opening ? { stepId, more: false, query: "" } : null;
     this._renderPanel();
-    if (!this.reacting) return;
-    const tray = this.panel.querySelector(".fb-reaction-tray");
-    (tray?.querySelector("[aria-pressed='true']") || tray?.querySelector("button"))?.focus({
-      preventScroll: true,
-    });
+    if (opening) this.panel.querySelector(".fb-pick button")?.focus({ preventScroll: true });
   }
 
-  // Esc or a click elsewhere; Esc hands focus back to the slot.
-  _closeTray(refocus = true) {
-    const stepId = this.reacting;
-    this.reacting = null;
+  // "…": the search field and the grid.
+  _expandPicker() {
+    if (!this.picking) return;
+    this.picking.more = !this.picking.more;
     this._renderPanel();
-    if (refocus) this._focusReactButton(stepId);
+    const target = this.picking.more ? ".fb-pick-search" : ".fb-pick-more";
+    this.panel.querySelector(target)?.focus({ preventScroll: true });
   }
 
-  _focusReactButton(stepId) {
+  // Esc or a click elsewhere; Esc hands focus back to the add chip.
+  _closePicker(refocus = true) {
+    const stepId = this.picking?.stepId;
+    if (!stepId) return;
+    this.picking = null;
+    this._renderPanel();
+    if (refocus) this._focusAddButton(stepId);
+  }
+
+  _focusAddButton(stepId) {
     this.panel
-      ?.querySelector(`[data-action="react-open"][data-step-id="${CSS.escape(stepId)}"]`)
+      ?.querySelector(`[data-action="rx-open"][data-step-id="${CSS.escape(stepId)}"]`)
       ?.focus({ preventScroll: true });
   }
 
-  // Shows at once; rolled back with a toast on failure. The emoji that is
-  // already there takes the reaction back.
+  // Shows the grid's matches for the search text, and what Enter does.
+  _filterPicker() {
+    const pick = this.panel?.querySelector(".fb-pick-x");
+    if (!pick || !this.picking) return;
+    const { T } = this;
+    const query = this.picking.query || "";
+    const typed = firstEmoji(query);
+    const shown = new Set(typed ? EMOJI.map(([emoji]) => emoji) : filterEmoji(query));
+    pick.querySelectorAll(".fb-pick-grid button").forEach((b) => {
+      b.hidden = !shown.has(b.dataset.emoji);
+    });
+    const hint = pick.querySelector(".fb-pick-hint");
+    if (typed) {
+      const [before, after] = T.emojiEnter.split("{emoji}");
+      hint.innerHTML = `${escapeHTML(before)}<b>${escapeHTML(typed)}</b>${escapeHTML(after ?? "")}`;
+    } else {
+      hint.textContent = shown.size ? T.emojiHint : T.emojiNoMatch;
+    }
+  }
+
+  // The picker opens upwards and flips below when the scroll area has no
+  // room above; it stays inside the panel sideways, then scrolls into view.
+  _placePicker() {
+    const pick = this.panel?.querySelector(".fb-pick");
+    if (!pick) return;
+    this._filterPicker();
+    const body = this.panel.querySelector(".fb-rp-body");
+    const area = body.getBoundingClientRect();
+    const overflow = pick.getBoundingClientRect().right - (area.right - 8);
+    if (overflow > 0) pick.style.left = `${-4 - overflow}px`;
+    if (pick.getBoundingClientRect().top < area.top + 8) pick.classList.add("below");
+    const box = pick.getBoundingClientRect();
+    if (box.bottom > area.bottom - 8) body.scrollTop += box.bottom - area.bottom + 8;
+    else if (box.top < area.top + 8) body.scrollTop -= area.top + 8 - box.top;
+  }
+
+  // Puts the reporter's emoji on a team message, or takes it off. Shows at
+  // once; rolled back with a toast on failure.
   _react(stepId, emoji) {
-    if (this.view?.name !== "report") return;
+    if (this.view?.name !== "report" || !emoji) return;
     const report = this._report(this.view.id);
     const step = report?.steps?.find((s) => s.id === stepId);
     if (!step || !canReact(step)) return;
-    const next = nextReaction(step, emoji);
-    const before = step.reaction || null;
-    this.reacting = null;
-    this.reports = upsertReport(this.reports, withReaction(report, stepId, next));
+    const before = stepReactions(step);
+    const after = toggleReaction(before, emoji);
+    this.picking = null;
+    this.reports = upsertReport(this.reports, withReactions(report, stepId, after));
     this._changed();
-    this._focusReactButton(stepId);
-    this._push("react", { id: report.id, step_id: stepId, emoji: next })
+    this._focusAddButton(stepId);
+    this._push("toggle_reaction", { id: report.id, step_id: stepId, emoji })
       .then((updated) => this._accept(updated))
       .catch(() => {
         const current = this._report(report.id);
-        if (current) {
-          this.reports = upsertReport(
-            this.reports,
-            withReaction(current, stepId, before?.emoji, before?.at),
-          );
-        }
+        if (current) this.reports = upsertReport(this.reports, withReactions(current, stepId, before));
         this._changed();
         this.host.toast(this.T.reactFailed);
       });
@@ -1031,17 +1223,41 @@ export class ReporterUpdates {
     const body = field.value.trim();
     const report = this._report(this.view.id);
     if (!body || !report) return;
+    field.value = "";
+    this.drafts.delete(report.id);
+    this._postReply(report, body, null, () => {
+      if (this._viewing(report.id) && !field.value) field.value = body;
+      else if (!this.drafts.has(report.id)) this.drafts.set(report.id, body);
+    });
+  }
+
+  // The answer field of the open question. It goes the reply's way: the
+  // server links a reply to the open question itself; the local copy
+  // names it so the answer shows in its place right away.
+  _sendAnswer() {
+    if (this.view?.name !== "report") return;
+    const field = this.panel.querySelector(".fb-answer-input");
+    const body = field?.value.trim();
+    const report = this._report(this.view.id);
+    if (!body || !report) return;
+    const questionId = field.closest(".fb-answer-form").dataset.questionId;
+    this.answerDrafts.delete(report.id);
+    this._postReply(report, body, questionId, () => {
+      if (!this.answerDrafts.has(report.id)) this.answerDrafts.set(report.id, body);
+    });
+  }
+
+  _postReply(report, body, answers, restore) {
     const local = {
       id: `local-${Date.now()}`,
       kind: "reply",
       author: "reporter",
       body,
+      answers,
       at: new Date().toISOString(),
       seen: true,
       pending: true,
     };
-    field.value = "";
-    this.drafts.delete(report.id);
     this.reports = upsertReport(this.reports, withStep(report, local));
     this._changed();
     this._push("reply", { id: report.id, body })
@@ -1049,8 +1265,7 @@ export class ReporterUpdates {
       .catch(() => {
         const current = this._report(report.id);
         if (current) this.reports = upsertReport(this.reports, withoutStep(current, local.id));
-        if (this._viewing(report.id) && !field.value) field.value = body;
-        else if (!this.drafts.has(report.id)) this.drafts.set(report.id, body);
+        restore();
         this._changed();
         this.host.toast(this.T.replyFailed);
       });
@@ -1129,11 +1344,30 @@ function focusSelector(el) {
     return `[data-action="${CSS.escape(el.dataset.action)}"]${step}${emoji}`;
   }
   if (el.matches(".fb-verdict-detail")) return ".fb-verdict-detail";
+  if (el.matches(".fb-pick-search")) return ".fb-pick-search";
+  if (el.matches(".fb-answer-input")) return ".fb-answer-input";
   return null;
 }
 
-function smileyIcon() {
-  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M5.6 9.4c.6.8 1.4 1.2 2.4 1.2s1.8-.4 2.4-1.2"/><path d="M6 6.4h.01M10 6.4h.01" stroke-width="1.8"/></svg>`;
+// "Nico", "Nico and Marc", "Nico, Marc and Lea" in the host's locale.
+function listNames(names, locale) {
+  try {
+    return new Intl.ListFormat(locale, { type: "conjunction" }).format(names);
+  } catch (_e) {
+    return names.join(", ");
+  }
+}
+
+function smileyPlusIcon() {
+  return `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M16.5 9.5A6.5 6.5 0 1 1 10.5 3.52"/><path d="M7.2 11.6c.7.9 1.7 1.4 2.8 1.4s2.1-.5 2.8-1.4"/><circle cx="7.6" cy="8.2" r=".6" fill="currentColor" stroke="none"/><circle cx="12.4" cy="8.2" r=".6" fill="currentColor" stroke="none"/><path d="M16 2.5v4M14 4.5h4"/></svg>`;
+}
+
+function dotsIcon() {
+  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>`;
+}
+
+function replyIcon() {
+  return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3v5a3 3 0 0 0 3 3h7M10 8l3 3-3 3"/></svg>`;
 }
 
 function backIcon() {

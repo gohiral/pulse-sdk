@@ -131,12 +131,31 @@ const T = {
   brokenPlaceholder: "What's still wrong? (optional)",
   replyPlaceholder: "Add a detail for the team…",
   answerPlaceholder: "Answer the team…",
+  // A question and the reporter's answer read as one thread; an open
+  // question carries its own answer field.
+  answerLabel: "Your answer",
+  answerFieldHint: "Shows up right under the question.",
+  sendAnswer: "Send answer",
+  // Replaces the bottom reply field while a question waits for its answer.
+  answerHint: "Answer the question above. You can add more after that.",
+  yourAnswer: "Your answer · {time}",
+  // Above a follow-up question: the earlier answer it asks about.
+  aboutYourAnswer: "About your answer “{answer}”",
   replyFailed: "Couldn't send your message",
-  // Emoji on a team message; `{emoji}` and `{name}` are filled in.
+  // Emoji on messages: the reporter adds theirs to the team's messages
+  // from a picker; `{emoji}` and `{name}` are filled in.
   react: "React",
   reactions: "Reactions",
-  yourReaction: "Your reaction {emoji}, change",
-  reactedBy: "{name} reacted {emoji}",
+  addReaction: "Add a reaction",
+  reactWith: "React with {emoji}",
+  removeReaction: "Remove your reaction {emoji}",
+  // On a chip; `{name}` lists who reacted ("Nico and Marc").
+  reactionFrom: "Reaction from {name}",
+  moreEmoji: "More emoji",
+  emojiSearch: "Search, or type any emoji",
+  emojiHint: "Type or paste any emoji and press Enter.",
+  emojiNoMatch: "No match. Type or paste the emoji itself.",
+  emojiEnter: "Press Enter to react with {emoji}",
   team: "The team",
   reactFailed: "Couldn't save your reaction",
   // The team's emoji on the button: tooltip and screen-reader text.

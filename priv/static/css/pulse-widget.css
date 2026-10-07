@@ -25,6 +25,8 @@
   --color-pending: oklch(70% 0 0);
   --color-muted: oklch(75% 0 0);
   --color-raised: oklch(96% 0 0);
+  --color-pressed: oklch(95% 0 0);
+  --color-faint: oklch(85% 0 0);
 }
 
 :where([data-theme="dark"]) {
@@ -39,6 +41,8 @@
   --color-pending: oklch(42% 0.004 60);
   --color-muted: oklch(38% 0.004 60);
   --color-raised: oklch(19% 0.005 60);
+  --color-pressed: oklch(21% 0.004 60);
+  --color-faint: oklch(28% 0.004 60);
 }
 
 .fb-fab {
@@ -1589,18 +1593,23 @@
   vertical-align: 1px;
 }
 
+/* Messages: the team's bubbles are outlined, the reporter's own filled. */
 .fb-bubble {
-  position: relative;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
   margin-top: 6px;
   padding: 8px 10px;
-  border-radius: 4px;
-  background: var(--color-surface);
+  border-radius: 6px;
+  background: var(--color-canvas);
+  box-shadow: inset 0 0 0 1px var(--color-faint);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .fb-bubble-mine {
   background: var(--color-raised);
+  box-shadow: none;
 }
 
 .fb-bubble-mine.pending {
@@ -1617,113 +1626,309 @@
   margin-top: 2px;
 }
 
-/* Reactions: the other side's emoji sits on a bubble's corner, like a
-   tapback. On team messages the reporter adds or changes theirs there
-   (a faint smiley until then); a tray of choices opens below. */
-.fb-bubble.fb-has-reaction {
-  margin-bottom: 14px;
+/* Reactions: chips on the bubble's bottom edge, ringed in canvas so they
+   read on the line. On the team's messages the reporter toggles theirs
+   and adds more with the add chip, which shows while the pointer is on
+   the message (always on touch screens); the picker opens above it. */
+.fb-rxs {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: -7px 0 0 10px;
 }
 
-.fb-reaction {
-  position: absolute;
-  right: 8px;
-  bottom: -14px;
-  display: inline-grid;
-  place-items: center;
-  min-width: 26px;
-  height: 22px;
-  padding: 0 6px;
+.fb-rx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 24px;
+  margin: 0;
+  padding: 0 8px;
   border: 1px solid var(--color-edge);
   border-radius: 999px;
   background: var(--color-canvas);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  box-sizing: border-box;
-  color: var(--color-tertiary);
+  box-shadow: 0 0 0 2px var(--color-canvas);
+  color: var(--color-secondary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1;
+  transition: opacity 120ms ease-in-out, color 100ms, border-color 100ms;
+}
+
+.fb-rx-e {
+  font-size: 14px;
   line-height: 1;
 }
 
-button.fb-reaction {
+button.fb-rx {
   cursor: pointer;
-  transition: color 100ms, border-color 100ms, opacity 100ms;
 }
 
-button.fb-reaction:hover,
-button.fb-reaction[aria-expanded="true"] {
+button.fb-rx:hover {
+  border-color: var(--color-edge-strong);
+}
+
+.fb-rx.on {
+  background: var(--color-raised);
   border-color: var(--color-edge-strong);
   color: var(--color-ink);
 }
 
-button.fb-reaction:focus-visible {
+.fb-rx-ro {
+  cursor: default;
+}
+
+button.fb-rx:focus-visible {
   outline: 2px solid var(--color-active);
   outline-offset: 2px;
 }
 
-.fb-reaction-add {
+.fb-rx-add {
+  padding: 0 7px;
+  color: var(--color-tertiary);
   opacity: 0;
 }
 
-.fb-bubble:hover .fb-reaction-add,
-.fb-reaction-add:focus-visible,
-.fb-reaction-add[aria-expanded="true"] {
+.fb-rx-add svg {
+  display: block;
+}
+
+.fb-msg:hover .fb-rx-add,
+.fb-msg:has(:focus-visible) .fb-rx-add,
+.fb-rx-add:focus-visible,
+.fb-rx-add[aria-expanded="true"] {
   opacity: 1;
 }
 
-/* No hover on touch screens: the smiley stays in view. */
+button.fb-rx-add:hover,
+.fb-rx-add[aria-expanded="true"] {
+  border-color: var(--color-edge-strong);
+  color: var(--color-ink);
+}
+
 @media (hover: none) {
-  .fb-reaction-add {
+  .fb-rx-add {
     opacity: 1;
   }
 }
 
-.fb-reaction-tray {
-  display: flex;
-  gap: 2px;
-  width: fit-content;
-  margin: 0 0 14px auto;
-  padding: 3px;
-  border: 1px solid var(--color-edge);
-  border-radius: 999px;
+.fb-pick {
+  position: absolute;
+  left: -4px;
+  bottom: calc(100% + 6px);
+  z-index: 2;
+  box-sizing: border-box;
+  max-width: calc(100vw - 48px);
+  padding: 4px;
+  border: 1px solid var(--color-edge-strong);
+  border-radius: 10px;
   background: var(--color-canvas);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  animation: fb-pick-in 120ms ease-out;
 }
 
-.fb-reaction-tray button {
-  display: grid;
+.fb-pick.below {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+@keyframes fb-pick-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.fb-pick-q {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fb-pick button {
+  display: inline-grid;
   place-items: center;
   width: 32px;
   height: 32px;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: none;
+  color: var(--color-secondary);
   font: inherit;
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  transition: background 100ms, transform 100ms;
 }
 
-.fb-reaction-tray button:hover {
+.fb-pick button:hover {
   background: var(--color-raised);
-  transform: scale(1.12);
+  color: var(--color-ink);
 }
 
-.fb-reaction-tray button[aria-pressed="true"] {
-  background: var(--color-raised);
-  box-shadow: inset 0 0 0 1px var(--color-edge-strong);
+.fb-pick button.on {
+  background: var(--color-pressed);
 }
 
-.fb-reaction-tray button:focus-visible {
+.fb-pick button:focus-visible {
   outline: 2px solid var(--color-active);
-  outline-offset: 1px;
+  outline-offset: -2px;
+}
+
+.fb-pick .fb-pick-more {
+  margin-left: 2px;
+  border-left: 1px solid var(--color-edge);
+  border-radius: 0 8px 8px 0;
+}
+
+.fb-pick .fb-pick-more[aria-expanded="true"] {
+  background: var(--color-raised);
+  color: var(--color-ink);
+}
+
+.fb-pick-x {
+  width: 296px;
+  max-width: 100%;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-edge);
+}
+
+.fb-pick-search {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--color-edge-soft);
+  border-radius: 6px;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.fb-pick-search::placeholder {
+  color: var(--color-secondary);
+  opacity: 0.7;
+}
+
+.fb-pick-search:focus {
+  border-color: var(--color-edge-strong);
+}
+
+.fb-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  max-height: 148px;
+  margin-top: 6px;
+  overflow-y: auto;
+}
+
+.fb-pick-grid button {
+  width: 100%;
+  height: 34px;
+  font-size: 19px;
+}
+
+.fb-pick-grid button[hidden] {
+  display: none;
+}
+
+.fb-pick-hint {
+  margin: 6px 2px 2px;
+  font-size: 11px;
+  color: var(--color-tertiary);
+}
+
+.fb-pick-hint b {
+  color: var(--color-ink);
+  font-weight: 500;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fb-reaction-tray button:hover {
-    transform: none;
+  .fb-pick {
+    animation: none;
   }
+}
+
+/* Question threads: the reporter's answer hangs under the team's
+   question on a connector. The line starts below the question (its
+   reaction chips included), in line with the bubble's 10px text
+   padding, and turns into the middle of the answer's 20px label line. */
+.fb-qa-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-secondary);
+}
+
+.fb-qa-ref svg {
+  flex-shrink: 0;
+}
+
+.fb-answer {
+  position: relative;
+  margin: 8px 0 0 20px;
+}
+
+.fb-answer::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: -8px;
+  width: 6px;
+  height: 18px;
+  box-sizing: border-box;
+  border-left: 1px solid var(--color-edge-strong);
+  border-bottom: 1px solid var(--color-edge-strong);
+  border-bottom-left-radius: 6px;
+}
+
+/* Still waiting: a lighter line to the answer field. */
+.fb-answer-form::before {
+  border-color: var(--color-edge);
+}
+
+.fb-answer-label {
+  display: block;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--color-secondary);
+}
+
+.fb-answer .fb-bubble {
+  margin-top: 2px;
+}
+
+.fb-answer-form .fb-textarea {
+  display: block;
+  margin-top: 2px;
+}
+
+.fb-answer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.fb-answer-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--color-tertiary);
+}
+
+.fb-answer-bar .fb-btn-primary {
+  flex-shrink: 0;
 }
 
 .fb-verdict {
@@ -1742,7 +1947,9 @@ button.fb-reaction:focus-visible {
   gap: 8px;
 }
 
-/* Reply field below the timeline; grows to three lines on focus. */
+/* Reply field below the timeline; grows to three lines on focus. One
+   line and the send button are both 36px; the button stays at the
+   bottom as the field grows. */
 .fb-rp-reply {
   display: flex;
   align-items: flex-end;
@@ -1755,10 +1962,35 @@ button.fb-reaction:focus-visible {
   display: none;
 }
 
+/* In the reply field's place while a question waits for its answer. */
+.fb-rp-foot {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--color-edge);
+  font-size: 12px;
+  color: var(--color-tertiary);
+}
+
+.fb-rp-foot[hidden] {
+  display: none;
+}
+
 .fb-rp-reply .fb-textarea {
   flex: 1;
+  height: 36px;
   min-height: 36px;
+  padding: 7px 10px;
+  line-height: 20px;
   transition: border-color 100ms ease, outline 100ms ease, min-height 100ms ease;
+}
+
+.fb-rp-reply .fb-btn-primary {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
 }
 
 .fb-rp-reply .fb-textarea:focus {

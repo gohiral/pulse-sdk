@@ -5,11 +5,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  REACTIONS,
   canReact,
   changedReports,
   dotStatus,
   escapeHTML,
+  filterEmoji,
+  firstEmoji,
   fmt,
   formatDate,
   freshTeamReactions,
@@ -20,8 +21,9 @@ import {
   latestTeamMessage,
   livePeek,
   mergePeek,
-  nextReaction,
+  openQuestion,
   peekKind,
+  reactionGroups,
   readDeepLink,
   stripDeepLink,
   relativeTime,
@@ -34,7 +36,6 @@ import {
   upsertReport,
   verdictNodeKey,
   withoutStep,
-  withReaction,
   withStep,
 } from "../../priv/static/js/reporter_view.js";
 
@@ -275,24 +276,45 @@ describe("reactions", () => {
     assert.equal(canReact(undefined), false);
   });
 
-  test("the emoji already there takes the reaction back", () => {
-    const note = step({ kind: "note", reaction: { emoji: "👍", author_name: null, at: "2026-10-06T09:00:00Z" } });
-    assert.equal(nextReaction(note, "👍"), null);
-    assert.equal(nextReaction(note, "🎉"), "🎉");
-    assert.equal(nextReaction(step({ kind: "note", reaction: null }), "👍"), "👍");
-  });
+  test("reactions group by emoji with counts; the reporter's are mine; legacy reaction falls back", () => {
+    const at = "2026-10-07T10:00:00Z";
+    const reply = step({
+      kind: "reply",
+      author: "reporter",
+      body: "Firefox",
+      reactions: [
+        { emoji: "👍", author: "team", author_name: "Nico", at },
+        { emoji: "👍", author: "team", author_name: "Marc", at },
+        { emoji: "🎉", author: "team", author_name: "Nico", at },
+      ],
+    });
+    assert.deepEqual(reactionGroups(reply), [
+      { emoji: "👍", count: 2, mine: false, names: ["Nico", "Marc"] },
+      { emoji: "🎉", count: 1, mine: false, names: ["Nico"] },
+    ]);
 
-  test("withReaction sets or clears one step's reaction", () => {
-    const note = step({ kind: "note", reaction: null });
-    const other = step({ kind: "note", reaction: null });
-    const r = report({ steps: [received(), note, other] });
+    const note = step({
+      kind: "note",
+      body: "On it",
+      reactions: [
+        { emoji: "🙏", author: "reporter", author_name: null, at },
+        { emoji: "🦄", author: "reporter", author_name: null, at },
+      ],
+      reaction: { emoji: "🦄", author_name: null, at },
+    });
+    assert.deepEqual(
+      reactionGroups(note).map(({ emoji, count, mine }) => [emoji, count, mine]),
+      [["🙏", 1, true], ["🦄", 1, true]],
+      "`reactions` wins over the legacy `reaction`",
+    );
+    assert.deepEqual(reactionGroups(step({ kind: "note", reactions: [] })), []);
 
-    const reacted = withReaction(r, note.id, "🙌", "2026-10-07T10:00:00Z");
-    assert.deepEqual(reacted.steps[1].reaction, { emoji: "🙌", author_name: null, at: "2026-10-07T10:00:00Z" });
-    assert.equal(reacted.steps[2].reaction, null);
-    assert.equal(r.steps[1].reaction, null, "leaves the original alone");
-
-    assert.equal(withReaction(reacted, note.id, null).steps[1].reaction, null);
+    // An older server sends only `reaction`, always from the other side.
+    const legacyNote = step({ kind: "note", reaction: { emoji: "👍", author_name: null, at } });
+    assert.deepEqual(reactionGroups(legacyNote), [{ emoji: "👍", count: 1, mine: true, names: [] }]);
+    const legacyReply = step({ kind: "reply", author: "reporter", reaction: { emoji: "🙏", author_name: "Nico Fuchs", at } });
+    assert.deepEqual(reactionGroups(legacyReply), [{ emoji: "🙏", count: 1, mine: false, names: ["Nico Fuchs"] }]);
+    assert.deepEqual(reactionGroups(step({ kind: "note", reaction: null })), []);
   });
 
   test("the team's reactions on the reporter's messages: fresh on a push, unshown on load", () => {
@@ -316,19 +338,39 @@ describe("reactions", () => {
     const again = report({ steps: [received(), note, { ...reply, reaction: { emoji: "🎉", author_name: "Marc", at: "2026-10-07T10:05:00Z" } }] });
     assert.equal(freshTeamReactions(after, again)[0].emoji, "🎉");
 
+    // Two people with the same emoji in the same second both play.
+    const both = report({ steps: [received(), note, { ...reply, reactions: [
+      { emoji: "🙏", author: "team", author_name: "Nico", at },
+      { emoji: "🙏", author: "team", author_name: "Marc", at },
+    ] }] });
+    assert.deepEqual(freshTeamReactions(after, both).map((r) => r.by), ["Marc"]);
+
     const now = new Date("2026-10-07T12:00:00Z").getTime();
     assert.equal(unshownTeamReactions([after], new Set(), now).length, 1);
     assert.equal(unshownTeamReactions([after], new Set([fresh.key]), now).length, 0);
     assert.equal(unshownTeamReactions([after], new Set(), now + 8 * 86_400_000).length, 0, "older than a week");
   });
 
-  test("offers the five emoji the server accepts", () => {
-    assert.deepEqual(REACTIONS, ["👍", "🙌", "🎉", "🙏", "👀"]);
+  test("the picker's search knows English and German; any emoji typed counts", () => {
+    assert.ok(filterEmoji("thumbs").includes("👍"));
+    assert.ok(filterEmoji("daumen").includes("👍"));
+    assert.ok(filterEmoji(" Daumen ").includes("👍"), "trimmed, any case");
+    assert.deepEqual(filterEmoji("rakete"), ["🚀"]);
+    assert.deepEqual(filterEmoji("xyzzy"), []);
+    assert.equal(filterEmoji("").length, 48, "an empty search shows the whole grid");
+
+    assert.equal(firstEmoji("🦄"), "🦄");
+    assert.equal(firstEmoji("❤️"), "❤️");
+    assert.equal(firstEmoji("👨‍👩‍👧"), "👨‍👩‍👧", "a joined family stays one emoji");
+    assert.equal(firstEmoji("so 🦄 much"), "🦄");
+    assert.equal(firstEmoji("abc"), null);
+    assert.equal(firstEmoji(""), null);
   });
 });
 
 describe("timeline", () => {
-  const shape = (nodes) => nodes.map((n) => [n.status, n.state, n.bubbles.map((b) => b.kind)]);
+  const shape = (nodes) =>
+    nodes.map((n) => [n.status, n.state, [...n.questions, ...n.bubbles].map((b) => b.kind)]);
 
   test("received only: now, then the steps ahead", () => {
     assert.deepEqual(shape(timeline(report())), [
@@ -389,6 +431,61 @@ describe("timeline", () => {
       ["fixed", "todo", []],
     ]);
     assert.equal(nodes[3].at, "2026-10-06T12:00:00Z");
+  });
+
+  test("answers nest under their question by id; a free reply stays a bubble", () => {
+    const question = step({ kind: "question", body: "Which Safari?" });
+    const answer = step({ kind: "reply", author: "reporter", body: "17.6", answers: question.id });
+    const detail = step({ kind: "reply", author: "reporter", body: "Also on iPad", answers: null });
+    const r = report({
+      status: "in_progress",
+      steps: [received(), step({ status: "in_progress" }), question, answer, detail],
+    });
+    const nodes = timeline(r);
+    const thread = nodes[2];
+    assert.equal(thread.question, true);
+    assert.deepEqual(thread.questions.map((q) => q.id), [question.id]);
+    assert.deepEqual(thread.answers.map((a) => a.id), [answer.id]);
+    assert.deepEqual(thread.bubbles.map((b) => b.id), [detail.id]);
+    assert.equal(thread.open, false);
+    assert.deepEqual(thread.stepIds, [question.id, answer.id, detail.id]);
+    assert.equal(openQuestion(nodes), null);
+  });
+
+  test("questions asked before an answer share one thread, open until answered", () => {
+    const first = step({ kind: "question", body: "Which Safari?" });
+    const second = step({ kind: "question", body: "Which page?" });
+    const r = report({ status: "needs_info", steps: [received(), first, second] });
+    const nodes = timeline(r);
+    assert.deepEqual(shape(nodes), [
+      ["received", "done", []],
+      ["needs_info", "now", ["question", "question"]],
+      ["in_progress", "todo", []],
+      ["fixed", "todo", []],
+    ]);
+    assert.equal(openQuestion(nodes), nodes[1]);
+
+    // The answer goes to the latest question and closes the thread.
+    const answer = step({ kind: "reply", author: "reporter", body: "17.6 on /leads", answers: second.id });
+    const answered = timeline({ ...withStep(r, answer), status: "received" });
+    assert.deepEqual(answered[1].answers, [answer]);
+    assert.equal(openQuestion(answered), null);
+  });
+
+  test("a follow-up node knows the answer it refers to", () => {
+    const question = step({ kind: "question", body: "Which Safari?" });
+    const answer = step({ kind: "reply", author: "reporter", body: "17.6", answers: question.id });
+    const followUp = step({ kind: "question", body: "Private mode too?", follows: question.id });
+    const r = report({ status: "needs_info", steps: [received(), question, answer, followUp] });
+    const nodes = timeline(r);
+    assert.deepEqual(shape(nodes).slice(0, 3), [
+      ["received", "done", []],
+      ["needs_info", "done", ["question"]],
+      ["needs_info", "now", ["question"]],
+    ]);
+    assert.deepEqual(nodes[2].follows, { question, answer });
+    assert.equal(nodes[2].open, true);
+    assert.equal(nodes[1].follows, null);
   });
 
   test("fixed: no steps ahead, verdict on the fixed step, reopen after works", () => {
