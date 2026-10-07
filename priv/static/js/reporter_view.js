@@ -262,9 +262,10 @@ export function timeline(report) {
 }
 
 // The fixed node "Works now" / "Still broken" belongs to, or null when the
-// reporter already answered or the report isn't fixed.
+// report isn't fixed or the reporter already said it is still broken.
+// After "Works now" the node keeps a way to reopen it.
 export function verdictNodeKey(report, nodes) {
-  if (report.status !== "fixed" || report.verdict != null) return null;
+  if (report.status !== "fixed" || report.verdict === "broken") return null;
   const now = nodes.find((n) => n.state === "now");
   return now && now.status === "fixed" ? now.key : null;
 }
@@ -302,15 +303,29 @@ export function socketUrl(serverUrl) {
   return serverUrl.replace(/\/+$/, "").replace(/^http/, "ws") + "/widget";
 }
 
-// `#hi-pulse-report=<id>` → id, else null.
-export function readDeepLink(hash) {
-  const match = /^#hi-pulse-report=([^&]+)$/.exec(hash || "");
+const DEEP_LINK = "hi-pulse-report";
+
+// The report a link asks to open: `?hi-pulse-report=<id>` (what the
+// emails send; a query survives a sign-in redirect) or the older
+// `#hi-pulse-report=<id>`. Takes `window.location` or the same fields.
+export function readDeepLink({ search = "", hash = "" } = {}) {
+  const fromQuery = new URLSearchParams(search).get(DEEP_LINK);
+  if (fromQuery) return fromQuery;
+  const match = /^#hi-pulse-report=([^&]+)$/.exec(hash);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
   } catch (_e) {
     return null;
   }
+}
+
+// The address without the deep link, for `history.replaceState`.
+export function stripDeepLink({ pathname = "", search = "", hash = "" } = {}) {
+  const params = new URLSearchParams(search);
+  params.delete(DEEP_LINK);
+  const query = params.toString();
+  return pathname + (query ? `?${query}` : "") + (hash.startsWith(`#${DEEP_LINK}=`) ? "" : hash);
 }
 
 // Whether focus sits in something the user types into. Takes an element

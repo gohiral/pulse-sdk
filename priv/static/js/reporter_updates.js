@@ -26,6 +26,7 @@ import {
   livePeek,
   mergePeek,
   readDeepLink,
+  stripDeepLink,
   relativeTime,
   resolvePeek,
   socketUrl,
@@ -138,7 +139,7 @@ export class ReporterUpdates {
     // A deep-linked report is asked for explicitly: it may be older than
     // the newest reports the join lists.
     const channel = socket.channel("reports", () => {
-      const include = readDeepLink(window.location.hash);
+      const include = readDeepLink(window.location);
       return include ? { include } : {};
     });
     channel.on("report", (payload) => this._onPush(payload));
@@ -183,8 +184,10 @@ export class ReporterUpdates {
 
   _notify(prev, report, cause) {
     if (this._viewing(report.id)) {
-      // Open in front of the reporter: tag what's new and mark it seen.
-      unseenSteps(report).forEach((s) => this.newStepIds.add(s.id));
+      // Open in front of the reporter: "New" moves to this update (the
+      // earlier ones were seen here) and it is marked seen.
+      const fresh = unseenSteps(report);
+      if (fresh.length) this.newStepIds = new Set(fresh.map((s) => s.id));
       this._markSeen(report);
       return;
     }
@@ -420,7 +423,7 @@ export class ReporterUpdates {
     const report = this._report(id);
     if (!report) return this.openList();
     this._saveDraft();
-    unseenSteps(report).forEach((s) => this.newStepIds.add(s.id));
+    this.newStepIds = new Set(unseenSteps(report).map((s) => s.id));
     this.verdict = null;
     this.pulseNow = true;
     this._openPanel({ name: "report", id }, { focusReply });
@@ -673,13 +676,19 @@ export class ReporterUpdates {
   _stepHTML(node, report, withVerdict, now) {
     const { T } = this;
     const isNew = node.stepIds.some((id) => this.newStepIds.has(id));
-    const label = node.question ? T.stepQuestion : labelFor(T.status, node.status);
-    const hint = this._hint(node);
-    const check = node.state === "done" || (node.state === "now" && node.status === "fixed");
+    // The fix still ahead reads as the promise alone: a gray "Fixed" title
+    // looked as if it were done.
+    const promise = node.state === "todo" && node.status === "fixed";
+    const label = promise
+      ? T.stepTodoFixed
+      : node.question
+        ? T.stepQuestion
+        : labelFor(T.status, node.status);
+    const hint = promise ? "" : this._hint(node);
     const pulse = this.pulseNow && node.state === "now" && isNew;
     return `
       <li class="fb-step" data-state="${node.state}" data-status="${escapeHTML(node.status)}">
-        <span class="fb-step-node${pulse ? " fb-pulse" : ""}" aria-hidden="true">${check ? checkIcon() : ""}</span>
+        <span class="fb-step-node${pulse ? " fb-pulse" : ""}" aria-hidden="true"></span>
         <div class="fb-step-main">
           <p class="fb-step-label">${escapeHTML(label)}${isNew ? `<span class="fb-new-tag">${escapeHTML(T.newTag)}</span>` : ""}</p>
           ${hint ? `<p class="fb-step-hint">${escapeHTML(hint)}</p>` : ""}
@@ -690,11 +699,11 @@ export class ReporterUpdates {
       </li>`;
   }
 
-  // One line under the step: what the current status means, or the promise
-  // on the "Fixed" step still ahead. Past steps speak through their bubbles.
+  // One line under the current step: what its status means. Past steps
+  // speak through their bubbles.
   _hint(node) {
     const { T } = this;
-    if (node.state === "todo") return node.status === "fixed" ? T.stepTodoFixed : "";
+    if (node.state === "todo") return "";
     if (node.state === "now" && !node.question) return T.stepHint?.[node.status] || "";
     return "";
   }
@@ -724,6 +733,12 @@ export class ReporterUpdates {
             <button type="button" class="fb-btn-primary fb-btn-sm" data-action="broken-send">${escapeHTML(T.send)}</button>
           </div>
         </div>`;
+    }
+    if (report.verdict === "works") {
+      return `
+      <div class="fb-verdict">
+        <button type="button" class="fb-link" data-action="broken"${disabled}>${escapeHTML(T.reopen)}</button>
+      </div>`;
     }
     return `
       <div class="fb-verdict">
@@ -798,15 +813,16 @@ export class ReporterUpdates {
   // Deep link, timers, listeners
   // ---------------------------------------------------------------------------
 
-  // `#hi-pulse-report=<id>` (the email button) opens that timeline once
-  // the reports are in, then drops the fragment.
+  // `?hi-pulse-report=<id>` (the email button) opens that timeline once
+  // the reports are in, then leaves the address. A report that isn't
+  // there (deleted, or someone else's) opens the list instead.
   _openDeepLink() {
-    const id = readDeepLink(window.location.hash);
+    const id = readDeepLink(window.location);
     if (!id) return false;
-    history.replaceState(history.state, "", window.location.pathname + window.location.search);
+    history.replaceState(history.state, "", stripDeepLink(window.location));
     const report = this._report(id);
-    if (!report) return false;
-    this.openReport(id, { focusReply: report.status === "needs_info" });
+    if (report) this.openReport(id, { focusReply: report.status === "needs_info" });
+    else this.openList();
     return true;
   }
 
@@ -835,10 +851,6 @@ function focusSelector(el) {
   if (el.dataset.action) return `[data-action="${CSS.escape(el.dataset.action)}"]`;
   if (el.matches(".fb-verdict-detail")) return ".fb-verdict-detail";
   return null;
-}
-
-function checkIcon() {
-  return `<svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg>`;
 }
 
 function backIcon() {

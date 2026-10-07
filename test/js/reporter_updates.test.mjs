@@ -19,6 +19,7 @@ import {
   mergePeek,
   peekKind,
   readDeepLink,
+  stripDeepLink,
   relativeTime,
   resolvePeek,
   socketUrl,
@@ -322,7 +323,7 @@ describe("timeline", () => {
     assert.equal(nodes[3].at, "2026-10-06T12:00:00Z");
   });
 
-  test("fixed: no steps ahead, verdict on the fixed step until answered", () => {
+  test("fixed: no steps ahead, verdict on the fixed step, reopen after works", () => {
     const fixedStep = step({ status: "fixed" });
     const r = report({ status: "fixed", steps: [received(), step({ status: "in_progress" }), fixedStep] });
     const nodes = timeline(r);
@@ -339,7 +340,9 @@ describe("timeline", () => {
     };
     const answeredNodes = timeline(answered);
     assert.deepEqual(answeredNodes[2].bubbles.map((b) => b.body), ["works"]);
-    assert.equal(verdictNodeKey(answered, answeredNodes), null);
+    // "Works now" keeps a way to reopen; "Still broken" closes it.
+    assert.equal(verdictNodeKey(answered, answeredNodes), fixedStep.id);
+    assert.equal(verdictNodeKey({ ...answered, verdict: "broken" }, answeredNodes), null);
   });
 
   test("still broken sends it back: the flow starts over after the old fix", () => {
@@ -408,12 +411,21 @@ describe("links and focus", () => {
     assert.equal(socketUrl(""), null);
   });
 
-  test("readDeepLink reads only our fragment", () => {
-    assert.equal(readDeepLink("#hi-pulse-report=0b6c-11ef"), "0b6c-11ef");
-    assert.equal(readDeepLink("#hi-pulse-report=a%20b"), "a b");
-    assert.equal(readDeepLink("#settings"), null);
-    assert.equal(readDeepLink(""), null);
-    assert.equal(readDeepLink("#hi-pulse-report=%E0%A4%A"), null);
+  test("readDeepLink reads our query parameter or fragment", () => {
+    assert.equal(readDeepLink({ search: "?hi-pulse-report=0b6c-11ef" }), "0b6c-11ef");
+    assert.equal(readDeepLink({ search: "?tab=x&hi-pulse-report=a%20b" }), "a b");
+    assert.equal(readDeepLink({ hash: "#hi-pulse-report=0b6c-11ef" }), "0b6c-11ef");
+    assert.equal(readDeepLink({ hash: "#hi-pulse-report=a%20b" }), "a b");
+    assert.equal(readDeepLink({ search: "?tab=x", hash: "#settings" }), null);
+    assert.equal(readDeepLink({}), null);
+    assert.equal(readDeepLink({ hash: "#hi-pulse-report=%E0%A4%A" }), null);
+  });
+
+  test("stripDeepLink keeps everything but the deep link", () => {
+    const loc = (search, hash = "") => ({ pathname: "/leads", search, hash });
+    assert.equal(stripDeepLink(loc("?hi-pulse-report=abc")), "/leads");
+    assert.equal(stripDeepLink(loc("?tab=export&hi-pulse-report=abc", "#top")), "/leads?tab=export#top");
+    assert.equal(stripDeepLink(loc("", "#hi-pulse-report=abc")), "/leads");
   });
 
   test("isTypingTarget: text fields and editors, not buttons or checkboxes", () => {

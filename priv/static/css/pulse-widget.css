@@ -1366,51 +1366,51 @@
 .fb-step {
   position: relative;
   display: grid;
-  grid-template-columns: 16px 1fr auto;
+  grid-template-columns: 12px 1fr auto;
   gap: 12px;
   padding-bottom: 16px;
 }
 
+/* The line, as in the hiral Kit's timeline: 1px in edge, from this
+   step's dot to the next one's, drawn per step so it follows wrapped
+   rows. The dots' canvas ring keeps it from touching them. */
 .fb-step::before {
   content: "";
   position: absolute;
-  left: 7px;
-  top: 18px;
-  bottom: -2px;
+  left: 5.5px;
+  top: 10px;
+  bottom: -10px;
   width: 1px;
-  background: var(--color-edge-soft);
-}
-
-.fb-step[data-state="done"]::before {
-  background: var(--color-edge-strong);
+  background: var(--color-edge);
 }
 
 .fb-step:last-child::before {
   display: none;
 }
 
+/* A 6px status dot (the Kit's status_dot): done ink, the current step in
+   its status colour, steps ahead hollow. Centred on the label's first line. */
 .fb-step-node {
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
+  position: relative;
+  justify-self: center;
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
   border: 1px solid var(--color-edge-strong);
   border-radius: 999px;
   background: var(--color-canvas);
+  box-shadow: 0 0 0 2px var(--color-canvas);
   box-sizing: border-box;
 }
 
 .fb-step[data-state="done"] .fb-step-node {
   background: var(--color-ink);
   border-color: var(--color-ink);
-  color: var(--color-canvas);
 }
 
 .fb-step[data-state="now"] .fb-step-node {
   background: var(--fb-status);
   border-color: var(--fb-status);
-  color: white;
 }
 
 /* The current step's node pulses once when it opens on a fresh change. */
@@ -1459,6 +1459,29 @@
 
 .fb-step[data-state="todo"] .fb-step-hint {
   color: inherit;
+}
+
+/* A quiet text button, e.g. reopening a report the reporter confirmed. */
+.fb-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-secondary);
+  cursor: pointer;
+  transition: color 100ms;
+}
+
+.fb-link:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+}
+
+.fb-link:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .fb-step-time {

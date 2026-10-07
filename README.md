@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.0"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.1"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.0"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.1"}
   ]
 end
 ```
@@ -254,7 +254,8 @@ Reporters see what happened to their feedback inside your app: status
 changes from Linear, notes and questions from the team, and the moment
 the fix is live. They answer questions and confirm the fix ("Works now" /
 "Still broken") from the same panel; both land on the Linear issue as
-comments. Feedback only: automatically captured errors have no reporter.
+comments. After "Works now" the fix step keeps a "Still broken after
+all? Reopen" link, so a fix that breaks again can still be reopened. Feedback only: automatically captured errors have no reporter.
 
 ### Turn it on
 
@@ -338,9 +339,12 @@ back to "Fixed" at Linear's "Done".
 
 ### Deep links
 
-`#hi-pulse-report=<issue id>` in a page URL opens that report's timeline
-once the widget connects, then drops the fragment. pulse's reminder
-emails link back to the page the report was sent from this way.
+`?hi-pulse-report=<issue id>` in a page URL (or the older
+`#hi-pulse-report=<issue id>`) opens that report's timeline once the
+widget connects, then leaves the address. A report that isn't the
+signed-in reporter's opens the list instead. pulse's reminder emails link
+back to the page the report was sent from this way; the query survives a
+sign-in redirect, as long as the app keeps the query in its return path.
 
 ### Copy
 
