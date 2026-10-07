@@ -36,9 +36,11 @@ defmodule HiPulse.Components do
       widget at all. Wire this to your auth gate (e.g. `@current_user
       != nil`).
     * `reporter` (map, default `%{}`) — identity stamped into the
-      submission. Supported keys: `:email`, `:id`, `:metadata`. When
-      `HiPulse.secret/0` is set, the email and id are also signed into
-      `data-reporter-token`, which turns on reporter updates.
+      submission. Supported keys: `:email`, `:id`, `:name`, `:metadata`.
+      `:name` is the user's display name; pulse shows it instead of the
+      email. When `HiPulse.secret/0` is set, the email and id (not the
+      name) are also signed into `data-reporter-token`, which turns on
+      reporter updates.
     * `context` (map, default `%{}`) — arbitrary key/value pairs
       attached to every submission (e.g. `%{tenant_id: "abc"}`).
     * `vendor_path` (string, default `"/assets/vendor/hi_pulse"`)
@@ -50,7 +52,7 @@ defmodule HiPulse.Components do
 
       <HiPulse.Components.pulse_widget
         enabled?={@current_user != nil}
-        reporter={%{email: @current_user.email, id: @current_user.id}}
+        reporter={%{email: @current_user.email, id: @current_user.id, name: @current_user.name}}
         context={%{tenant_id: @current_tenant.id}}
       />
   """

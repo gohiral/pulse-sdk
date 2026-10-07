@@ -28,7 +28,7 @@ defmodule HiPulse.Client do
         url: "https://app.example.com/funnels/42",
         viewport: %{width: 1440, height: 900},
         user_agent: "Mozilla/5.0 ...",
-        reporter: %{email: "alice@example.com"},
+        reporter: %{email: "alice@example.com", name: "Alice Berg"},
         context: %{tenant_id: "abc123"}
       })
       #=> {:ok, %{event_id: "...", issue_id: "...", linear_url: nil}}

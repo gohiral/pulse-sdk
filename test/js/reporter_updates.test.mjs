@@ -5,11 +5,14 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  REACTIONS,
+  canReact,
   changedReports,
   dotStatus,
   escapeHTML,
   fmt,
   formatDate,
+  freshTeamReactions,
   hasUpdate,
   isTypingTarget,
   joinPeek,
@@ -17,6 +20,7 @@ import {
   latestTeamMessage,
   livePeek,
   mergePeek,
+  nextReaction,
   peekKind,
   readDeepLink,
   stripDeepLink,
@@ -26,9 +30,11 @@ import {
   sortReports,
   timeline,
   unseenCount,
+  unshownTeamReactions,
   upsertReport,
   verdictNodeKey,
   withoutStep,
+  withReaction,
   withStep,
 } from "../../priv/static/js/reporter_view.js";
 
@@ -256,6 +262,68 @@ describe("report state", () => {
     });
     assert.equal(latestTeamMessage(r).body, "Which Safari?");
     assert.equal(latestTeamMessage(report()), null);
+  });
+});
+
+describe("reactions", () => {
+  test("the reporter reacts only to the team's notes and questions", () => {
+    assert.equal(canReact(step({ kind: "note", body: "On it" })), true);
+    assert.equal(canReact(step({ kind: "question", body: "Which browser?" })), true);
+    assert.equal(canReact(received()), false);
+    assert.equal(canReact(step({ kind: "reply", author: "reporter", body: "Firefox" })), false);
+    assert.equal(canReact(step({ kind: "verdict", author: "reporter", body: "works" })), false);
+    assert.equal(canReact(undefined), false);
+  });
+
+  test("the emoji already there takes the reaction back", () => {
+    const note = step({ kind: "note", reaction: { emoji: "👍", author_name: null, at: "2026-10-06T09:00:00Z" } });
+    assert.equal(nextReaction(note, "👍"), null);
+    assert.equal(nextReaction(note, "🎉"), "🎉");
+    assert.equal(nextReaction(step({ kind: "note", reaction: null }), "👍"), "👍");
+  });
+
+  test("withReaction sets or clears one step's reaction", () => {
+    const note = step({ kind: "note", reaction: null });
+    const other = step({ kind: "note", reaction: null });
+    const r = report({ steps: [received(), note, other] });
+
+    const reacted = withReaction(r, note.id, "🙌", "2026-10-07T10:00:00Z");
+    assert.deepEqual(reacted.steps[1].reaction, { emoji: "🙌", author_name: null, at: "2026-10-07T10:00:00Z" });
+    assert.equal(reacted.steps[2].reaction, null);
+    assert.equal(r.steps[1].reaction, null, "leaves the original alone");
+
+    assert.equal(withReaction(reacted, note.id, null).steps[1].reaction, null);
+  });
+
+  test("the team's reactions on the reporter's messages: fresh on a push, unshown on load", () => {
+    const reply = step({ kind: "reply", author: "reporter", body: "Firefox", reaction: null });
+    const note = step({ kind: "note", body: "On it", reaction: { emoji: "👍", author_name: null, at: "2026-10-07T09:00:00Z" } });
+    const before = report({ steps: [received(), note, reply] });
+    assert.deepEqual(freshTeamReactions(before, before), [], "the reporter's own reaction never plays");
+
+    const at = "2026-10-07T10:00:00Z";
+    const after = report({ steps: [received(), note, { ...reply, reaction: { emoji: "🙏", author_name: "Nico", at } }] });
+    const [fresh] = freshTeamReactions(before, after);
+    assert.deepEqual(fresh, { key: `${reply.id}|${at}|🙏`, reportId: "r1", stepId: reply.id, emoji: "🙏", by: "Nico", at });
+    assert.deepEqual(freshTeamReactions(after, after), []);
+    assert.equal(freshTeamReactions(undefined, after).length, 1, "a new report counts too");
+
+    // Another emoji is a new key, even within the same second.
+    const swapped = report({ steps: [received(), note, { ...reply, reaction: { emoji: "👀", author_name: "Nico", at } }] });
+    assert.equal(freshTeamReactions(after, swapped)[0].emoji, "👀");
+
+    // Reacting again later with another emoji is a new key too.
+    const again = report({ steps: [received(), note, { ...reply, reaction: { emoji: "🎉", author_name: "Marc", at: "2026-10-07T10:05:00Z" } }] });
+    assert.equal(freshTeamReactions(after, again)[0].emoji, "🎉");
+
+    const now = new Date("2026-10-07T12:00:00Z").getTime();
+    assert.equal(unshownTeamReactions([after], new Set(), now).length, 1);
+    assert.equal(unshownTeamReactions([after], new Set([fresh.key]), now).length, 0);
+    assert.equal(unshownTeamReactions([after], new Set(), now + 8 * 86_400_000).length, 0, "older than a week");
+  });
+
+  test("offers the five emoji the server accepts", () => {
+    assert.deepEqual(REACTIONS, ["👍", "🙌", "🎉", "🙏", "👀"]);
   });
 });
 

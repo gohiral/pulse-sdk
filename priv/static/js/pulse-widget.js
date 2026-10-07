@@ -132,6 +132,15 @@ const T = {
   replyPlaceholder: "Add a detail for the team…",
   answerPlaceholder: "Answer the team…",
   replyFailed: "Couldn't send your message",
+  // Emoji on a team message; `{emoji}` and `{name}` are filled in.
+  react: "React",
+  reactions: "Reactions",
+  yourReaction: "Your reaction {emoji}, change",
+  reactedBy: "{name} reacted {emoji}",
+  team: "The team",
+  reactFailed: "Couldn't save your reaction",
+  // The team's emoji on the button: tooltip and screen-reader text.
+  fabReaction: "{name} reacted {emoji} to your message",
   peekFixed: "Fixed: {title}",
   peekFixedSub: "Live now · try it and tell us if it works",
   peekQuestion: "The team asked about your report",
@@ -280,7 +289,7 @@ export const PulseWidgetHook = {
     fab.className = "fb-fab";
     fab.setAttribute("aria-label", T.fab);
     fab.setAttribute("data-fb-tooltip", T.fabTooltip);
-    fab.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-3 3v-3H3a1 1 0 0 1-1-1V3z"/></svg>`;
+    fab.innerHTML = `<span class="fb-fab-icon"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7l-3 3v-3H3a1 1 0 0 1-1-1V3z"/></svg></span>`;
     fab.setAttribute("aria-expanded", "false");
     // Keep the host page's focus where it is: a plain button takes focus
     // on pointerdown, which blurs whatever the user was editing (and can
@@ -288,13 +297,16 @@ export const PulseWidgetHook = {
     fab.addEventListener("pointerdown", (e) => {
       e.preventDefault();
     });
-    // With unseen reporter updates the FAB leads to them; otherwise it
-    // opens the feedback form as always.
+    // While it shows a team reaction the FAB opens that report; with
+    // unseen reporter updates it leads to them; otherwise it opens the
+    // feedback form as always.
     fab.addEventListener("click", () => {
       if (this.formPanel || this.annotatorOverlay) {
         this._close();
       } else if (this.updates?.panelOpen) {
         this.updates.closePanel();
+      } else if (this.updates?.reactionShowing) {
+        this.updates.openReaction();
       } else if (this.updates?.unseenCount()) {
         this.updates.openFromFab();
       } else {
@@ -400,6 +412,7 @@ export const PulseWidgetHook = {
   _open() {
     if (this.formPanel || this.annotatorOverlay) return;
     this.updates?.closePanel({ handoff: true });
+    this.updates?.stopReaction();
     // Freeze the rrweb buffer at this moment — we don't want the form-filling
     // or annotation activity in the recording.
     pauseRecorder();
@@ -568,13 +581,20 @@ export const PulseWidgetHook = {
     panel.querySelector("input[name=title]").focus({ preventScroll: true });
   },
 
-  // "Your reports" link in the form header, once the reporter has any.
+  // "Your reports" button in the form header, once the reporter has any:
+  // an inbox icon carrying the FAB's dot (the FAB hides it while the form
+  // is open), the label, and the count of unseen updates.
   _syncReportsLink() {
     const link = this.formPanel?.querySelector("[data-action='your-reports']");
     if (!link) return;
     link.hidden = !this.updates?.hasReports();
     const count = this.updates?.unseenCount() || 0;
-    link.textContent = T.yourReports;
+    const status = this.updates?.dotStatus() || null;
+    link.innerHTML = `<span class="fb-head-icon">${inboxIcon()}<span class="fb-fab-dot fb-head-dot" aria-hidden="true"></span></span>`;
+    const dot = link.querySelector(".fb-head-dot");
+    dot.hidden = !status;
+    dot.dataset.status = status || "";
+    link.append(T.yourReports);
     if (count) {
       const badge = document.createElement("span");
       badge.className = "fb-count";
@@ -1191,6 +1211,11 @@ function chip(key, value, label, active = false, prioVariant = null) {
       ? `data-prio="${value}" data-value="${value}"${prioVariant ? ` data-prio-variant="${prioVariant}"` : ""}`
       : `data-type="${value}" data-value="${value}"`;
   return `<button type="button" class="fb-chip ${active ? "active" : ""}" ${attrs} role="radio" aria-checked="${active}"><span class="fb-dot" aria-hidden="true"></span>${label}</button>`;
+}
+
+function inboxIcon() {
+  // Heroicons-style inbox tray, 14×14 like the toolbar icons.
+  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 9.25 3.9 3.8a1 1 0 0 1 .96-.7h6.28a1 1 0 0 1 .96.7l1.65 5.45v2.75a1.25 1.25 0 0 1-1.25 1.25h-9A1.25 1.25 0 0 1 2.25 12V9.25Z"/><path d="M2.25 9.25h3l.75 1.5h4l.75-1.5h3"/></svg>`;
 }
 
 function rectIcon() {

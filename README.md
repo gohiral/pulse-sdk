@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.1"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -53,8 +53,8 @@ below):
 - A dot on the button when one of your reports changed, and a one-line
   peek for questions from the team and for fixes that went live.
 - A "Your reports" panel: each report as a timeline from received to
-  fixed, with the team's messages, your replies, and "Works now" /
-  "Still broken" once it's fixed.
+  fixed, with the team's messages, your replies, an emoji reaction on
+  any team message, and "Works now" / "Still broken" once it's fixed.
 
 Automatic error capture (opt-in via `--capture-errors`, defaults to `prod-only`):
 
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.1"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
   ]
 end
 ```
@@ -227,12 +227,16 @@ prop. The installer's default snippet looks like:
   enabled?={assigns[:current_user] != nil}
   reporter={
     case assigns[:current_user] do
-      %{email: email, id: id} -> %{email: email, id: id}
+      %{email: email, id: id} = user -> %{email: email, id: id, name: Map.get(user, :name)}
       _ -> %{}
     end
   }
 />
 ```
+
+`name` is optional: the user's display name (e.g. from the Microsoft
+sign-in). pulse shows it instead of the email ("Sandra replied"), in
+Linear and on its issue page. Pass whatever field your user has.
 
 Tighten the gate as needed:
 
@@ -254,7 +258,10 @@ Reporters see what happened to their feedback inside your app: status
 changes from Linear, notes and questions from the team, and the moment
 the fix is live. They answer questions and confirm the fix ("Works now" /
 "Still broken") from the same panel; both land on the Linear issue as
-comments. After "Works now" the fix step keeps a "Still broken after
+comments. A smiley on each team message puts an emoji on it (👍 🙌 🎉 🙏
+👀), and the team's reactions show on the reporter's own messages. A
+new team reaction also shows on the floating button for 5 seconds,
+instead of a dot. Reactions only show in the widget and in pulse. After "Works now" the fix step keeps a "Still broken after
 all? Reopen" link, so a fix that breaks again can still be reopened. Feedback only: automatically captured errors have no reporter.
 
 ### Turn it on
@@ -278,8 +285,9 @@ all? Reopen" link, so a fix that breaks again can still be reopened. Feedback on
    the widget behaves as before.
 
 2. **Pass an email or id as `reporter`.** The installer's snippet already
-   does (`%{email: email, id: id}`). The id should be stable for the user,
-   since pulse matches reports by id first and by email otherwise.
+   does (`%{email: email, id: id, name: …}`). The id should be stable for the
+   user, since pulse matches reports by id first and by email otherwise. The
+   optional `name` only labels the reporter in pulse and Linear.
 
 3. **Let esbuild resolve `phoenix`.** The widget connects with
    `import { Socket } from "phoenix"`, resolved from your `deps/`
@@ -350,8 +358,10 @@ sign-in redirect, as long as the app keeps the query in its return path.
 
 The new strings live on `T` with the rest (see "Customize copy"):
 `T.status`, `T.stepHint`, `T.peekFixed`, `T.releaseNote`, `T.time` and
-friends. `{title}`, `{count}`, `{n}` and `{date}` are filled in at
-runtime; keep them when translating. `T.locale` (default `"en-GB"`)
+friends; reactions add `T.react`, `T.reactions`, `T.yourReaction`,
+`T.reactedBy`, `T.team`, `T.reactFailed` and `T.fabReaction` (0.3.0). `{title}`, `{count}`,
+`{n}`, `{date}`, `{emoji}` and `{name}` are filled in at runtime; keep them
+when translating. `T.locale` (default `"en-GB"`)
 formats dates like "2 Oct".
 
 ## Automatic error capture
@@ -539,7 +549,7 @@ full schema. Snake_case end-to-end:
   "user_agent": "string",
   "console_buffer": [...],
   "context": {...},
-  "reporter": { "email": "...", "id": "...", "metadata": {...} },
+  "reporter": { "email": "...", "id": "...", "name": "...", "metadata": {...} },
   "replay_duration_ms": 0
 }
 ```

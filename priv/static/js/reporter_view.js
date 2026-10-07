@@ -201,6 +201,68 @@ function signature(report) {
   return [report.status, report.status_at, report.verdict, report.unseen, steps.length, last?.id].join("|");
 }
 
+// ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+// The emoji the reporter can put on a team message, in tray order. The
+// server accepts exactly these (`Step.reactions/0`).
+export const REACTIONS = ["👍", "🙌", "🎉", "🙏", "👀"];
+
+// The reporter reacts to the team's notes and questions; the team reacts
+// to the reporter's replies and verdicts on its side.
+export function canReact(step) {
+  return step?.author === "team" && (step.kind === "note" || step.kind === "question");
+}
+
+// Picking the emoji that is already there takes it back.
+export function nextReaction(step, emoji) {
+  return step?.reaction?.emoji === emoji ? null : emoji;
+}
+
+// The report with `emoji` (or none) on step `stepId`, shown at once
+// while the server confirms.
+export function withReaction(report, stepId, emoji, at = new Date().toISOString()) {
+  return {
+    ...report,
+    steps: (report.steps || []).map((s) =>
+      s.id === stepId ? { ...s, reaction: emoji ? { emoji, author_name: null, at } : null } : s,
+    ),
+  };
+}
+
+// The team's reactions on the reporter's own messages, as
+// `{key, reportId, stepId, emoji, by, at}` (`by` is the team member's name). `key` changes when the team
+// reacts again, so a new emoji plays even on the same message; it holds
+// the emoji too, since `at` is in whole seconds.
+export function teamReactions(report) {
+  return (report?.steps || [])
+    .filter((s) => s.author === "reporter" && s.reaction?.emoji)
+    .map((s) => ({
+      key: `${s.id}|${s.reaction.at}|${s.reaction.emoji}`,
+      reportId: report.id,
+      stepId: s.id,
+      emoji: s.reaction.emoji,
+      by: s.reaction.author_name,
+      at: s.reaction.at,
+    }));
+}
+
+// Team reactions in `next` that weren't in `prev` (a live push).
+export function freshTeamReactions(prev, next) {
+  const known = new Set(teamReactions(prev).map((r) => r.key));
+  return teamReactions(next).filter((r) => !known.has(r.key));
+}
+
+// Team reactions the button hasn't shown yet (keys in `shown`), from the
+// last `maxAgeMs`, oldest first. On page load these play once.
+export function unshownTeamReactions(reports, shown, now, maxAgeMs = 7 * 86_400_000) {
+  return (reports || [])
+    .flatMap(teamReactions)
+    .filter((r) => !shown.has(r.key) && now - new Date(r.at).getTime() <= maxAgeMs)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
 // Latest note or question from the team, for list excerpts and the peek.
 export function latestTeamMessage(report) {
   return [...(report?.steps || [])].reverse().find((s) => s.kind === "note" || s.kind === "question") || null;

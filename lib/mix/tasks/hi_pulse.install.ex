@@ -475,7 +475,7 @@ defmodule Mix.Tasks.HiPulse.Install do
           enabled?={assigns[:current_user] != nil}
           reporter={
             case assigns[:current_user] do
-              %{email: email, id: id} -> %{email: email, id: id}
+              %{email: email, id: id} = user -> %{email: email, id: id, name: Map.get(user, :name)}
               _ -> %{}
             end
           }

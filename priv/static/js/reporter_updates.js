@@ -1,7 +1,8 @@
 // Reporter updates — the reporter sees what happened to their feedback
 // without leaving the app: a dot on the FAB, a one-line peek for questions
-// and fixes, and a reports panel (list + timeline with replies and the
-// "Works now" / "Still broken" verdict).
+// and fixes, and a reports panel (list + timeline with replies, emoji
+// reactions on the team's messages and the "Works now" / "Still broken"
+// verdict).
 //
 // Runs only when the host signs the reporter (`data-reporter-token`, from
 // HI_PULSE_SECRET). Holds one Phoenix socket to `<server>/widget`, joins
@@ -14,10 +15,14 @@
 
 import { Socket } from "phoenix";
 import {
+  REACTIONS,
+  canReact,
   dotStatus,
   escapeHTML,
   fmt,
   formatDate,
+  freshTeamReactions,
+  teamReactions,
   hasUpdate,
   isTypingTarget,
   joinPeek,
@@ -25,6 +30,7 @@ import {
   latestTeamMessage,
   livePeek,
   mergePeek,
+  nextReaction,
   readDeepLink,
   stripDeepLink,
   relativeTime,
@@ -34,9 +40,11 @@ import {
   timeline,
   unseenCount,
   unseenSteps,
+  unshownTeamReactions,
   upsertReport,
   verdictNodeKey,
   withoutStep,
+  withReaction,
   withStep,
   changedReports,
 } from "./reporter_view.js";
@@ -47,6 +55,12 @@ const TYPING_GRACE_MS = 1000;
 // Phoenix's default reconnect schedule.
 const RECONNECT_MS = [10, 50, 100, 150, 200, 250, 500, 1000, 2000];
 const WIDGET_SURFACES = ".fb-form-panel, .fb-reports-panel, .fb-peek, .fb-overlay";
+// A team reaction stays on the FAB this long (hover pauses it).
+const REACTION_MS = 5000;
+const REACTION_LEAVE_MS = 260;
+const REACTION_GAP_MS = 600;
+// Team reactions the FAB already showed, so a page load doesn't replay them.
+const SHOWN_REACTIONS_KEY = "hi-pulse-shown-reactions";
 
 export class ReporterUpdates {
   // `host` is the PulseWidgetHook seam: corner(), formOpen(), closeForm(),
@@ -64,14 +78,25 @@ export class ReporterUpdates {
     this.newStepIds = new Set();
     this.drafts = new Map();
     this.verdict = null;
+    // The team message whose reaction tray is open.
+    this.reacting = null;
     this.pendingPeek = null;
     this.shownPeek = null;
     this.releaseTitles = new Set();
     this.timers = {};
     this.listeners = [];
+    // Team reactions waiting for the FAB, and the one on it now.
+    this.reactionQueue = [];
+    this.reaction = null;
+    this.shownReactions = loadShownReactions();
 
     this._buildDot();
     this._buildPeek();
+    this._buildAnnouncer();
+    this._listen(fab, "mouseenter", () => this._pauseReaction());
+    this._listen(fab, "mouseleave", () => this._resumeReaction());
+    this._listen(fab, "focus", () => this._pauseReaction());
+    this._listen(fab, "blur", () => this._resumeReaction());
     this._listen(document, "focusin", (e) => {
       if (isTypingTarget(e.target)) this._clearTimer("typing");
     });
@@ -80,6 +105,7 @@ export class ReporterUpdates {
     });
     this._listen(document, "visibilitychange", () => this._onAttention());
     this._listen(window, "focus", () => this._onAttention());
+    this._listen(window, "blur", () => this._onAttention());
     this._listen(document, "keydown", (e) => this._onKeydown(e));
     this._connect(serverUrl, token, reporterToken);
   }
@@ -93,8 +119,11 @@ export class ReporterUpdates {
     this.socket = null;
     this.channel = null;
     this.closePanel({ handoff: true });
+    this._endReaction({ animate: false });
+    this.reactionQueue = [];
     this.peekEl?.remove();
     this.dot?.remove();
+    this.announcer?.remove();
   }
 
   // ---------------------------------------------------------------------------
@@ -111,6 +140,17 @@ export class ReporterUpdates {
 
   unseenCount() {
     return unseenCount(this.reports);
+  }
+
+  // The FAB dot's colour key, or null without unseen updates. The form's
+  // "Your reports" button repeats it, since the FAB hides its dot while
+  // a panel is open.
+  dotStatus() {
+    return dotStatus(this.reports);
+  }
+
+  get reactionShowing() {
+    return this.reaction !== null;
   }
 
   // ---------------------------------------------------------------------------
@@ -164,12 +204,16 @@ export class ReporterUpdates {
       changedReports(previous, this.reports).forEach(({ prev, next }) =>
         this._notify(prev, next, "update"),
       );
+      // A reaction doesn't change a report's signature: catch up on any
+      // that came while the socket was down.
+      this._queueReactions(unshownTeamReactions(this.reports, this.shownReactions, Date.now()));
     } else {
       this.joined = true;
       if (!this._openDeepLink()) {
         const peek = joinPeek(this.reports);
         if (peek) this._setTimer("joinPeek", () => this._queuePeek(peek), JOIN_PEEK_DELAY_MS);
       }
+      this._queueReactions(unshownTeamReactions(this.reports, this.shownReactions, Date.now()));
     }
     this._changed();
   }
@@ -183,6 +227,7 @@ export class ReporterUpdates {
   }
 
   _notify(prev, report, cause) {
+    this._queueReactions(freshTeamReactions(prev, report));
     if (this._viewing(report.id)) {
       // Open in front of the reporter: "New" moves to this update (the
       // earlier ones were seen here) and it is marked seen.
@@ -224,9 +269,17 @@ export class ReporterUpdates {
       });
   }
 
-  // Back in the tab: a held peek can rise, an open timeline marks itself seen.
+  // Back in the tab: a held peek or reaction can rise, an open timeline
+  // marks itself seen.
   _onAttention() {
     this._tryShowPeek();
+    // A reaction on the FAB waits while nobody is looking.
+    if (document.visibilityState === "visible" && document.hasFocus()) {
+      if (!this.fab.matches(":hover")) this._resumeReaction();
+    } else {
+      this._pauseReaction();
+    }
+    this._tryPlayReaction();
     if (this.view?.name === "report") {
       const report = this._report(this.view.id);
       if (report) this._markSeen(report);
@@ -327,6 +380,7 @@ export class ReporterUpdates {
   // Called by the hook when the feedback form closes.
   flushPeek() {
     this._tryShowPeek();
+    this._tryPlayReaction();
   }
 
   _typingOutside() {
@@ -401,6 +455,124 @@ export class ReporterUpdates {
   }
 
   // ---------------------------------------------------------------------------
+  // Team reactions on the FAB — the emoji sits on its corner for 5s, then
+  // goes; no dot stays behind
+  // ---------------------------------------------------------------------------
+
+  _buildAnnouncer() {
+    const el = document.createElement("span");
+    el.className = "fb-sr-only";
+    el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+    this.announcer = el;
+  }
+
+  // A reaction on the report open in front of the reporter shows on its
+  // bubble only.
+  _queueReactions(items) {
+    for (const item of items) {
+      if (this.shownReactions.has(item.key)) continue;
+      if (this._viewing(item.reportId)) {
+        this._markReactionShown(item);
+      } else if (
+        this.reaction?.item.key !== item.key &&
+        !this.reactionQueue.some((queued) => queued.key === item.key)
+      ) {
+        this.reactionQueue.push(item);
+      }
+    }
+    this._tryPlayReaction();
+  }
+
+  // One at a time, with no panel or form open, in a visible, focused tab.
+  _tryPlayReaction() {
+    if (this.reaction || this.timers.reactionGap || this.reactionQueue.length === 0) return;
+    if (this.panel || this.openingPanel || this.host.formOpen()) return;
+    if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+    // The team may have taken a waiting reaction back or replaced it.
+    const current = new Set(this.reports.flatMap(teamReactions).map((r) => r.key));
+    this.reactionQueue = this.reactionQueue.filter((queued) => current.has(queued.key));
+    const item = this.reactionQueue.shift();
+    if (!item) return;
+    this._markReactionShown(item);
+
+    const el = document.createElement("span");
+    el.className = "fb-fab-emoji";
+    el.setAttribute("aria-hidden", "true");
+    el.textContent = item.emoji;
+    this.fab.classList.add("fb-fab-reacting");
+    this.fab.appendChild(el);
+
+    // The FAB's tooltip says who reacted while the emoji is up.
+    const text = fmt(this.T.fabReaction, { name: item.by || this.T.team, emoji: item.emoji });
+    this.reaction = { item, el, tooltip: this.fab.dataset.fbTooltip, remaining: REACTION_MS, timer: null };
+    this.fab.dataset.fbTooltip = text;
+    this.announcer.textContent = text;
+    if (!this.fab.matches(":hover") && document.activeElement !== this.fab) this._resumeReaction();
+  }
+
+  _pauseReaction() {
+    const r = this.reaction;
+    if (!r?.timer) return;
+    clearTimeout(r.timer);
+    r.timer = null;
+    r.remaining -= Date.now() - r.startedAt;
+  }
+
+  _resumeReaction() {
+    const r = this.reaction;
+    if (!r || r.timer) return;
+    r.startedAt = Date.now();
+    r.timer = setTimeout(() => this._endReaction(), Math.max(r.remaining, 1500));
+  }
+
+  // Shrinks the emoji away, then plays the next.
+  _endReaction({ animate = true } = {}) {
+    const r = this.reaction;
+    if (!r) return;
+    clearTimeout(r.timer);
+    this.reaction = null;
+    if (r.tooltip == null) delete this.fab.dataset.fbTooltip;
+    else this.fab.dataset.fbTooltip = r.tooltip;
+    const finish = () => {
+      r.el.remove();
+      this.fab.classList.remove("fb-fab-reacting");
+    };
+    if (!animate) return finish();
+    r.el.classList.add("leaving");
+    this._setTimer("reactionGap", () => this._tryPlayReaction(), REACTION_LEAVE_MS + REACTION_GAP_MS);
+    setTimeout(finish, REACTION_LEAVE_MS);
+  }
+
+  // Called by the hook when the feedback form opens: the FAB is busy.
+  stopReaction() {
+    this._endReaction({ animate: false });
+  }
+
+  // Clicking the FAB while it shows a reaction opens that report.
+  openReaction() {
+    const item = this.reaction?.item;
+    this.stopReaction();
+    if (item) this.openReport(item.reportId);
+  }
+
+  // The report's team reactions show on its bubbles now: they don't play
+  // on the FAB later.
+  _consumeReactions(report) {
+    teamReactions(report).forEach((item) => this._markReactionShown(item));
+    this.reactionQueue = this.reactionQueue.filter((queued) => queued.reportId !== report.id);
+  }
+
+  _markReactionShown(item) {
+    this.shownReactions.add(item.key);
+    try {
+      localStorage.setItem(SHOWN_REACTIONS_KEY, JSON.stringify([...this.shownReactions].slice(-100)));
+    } catch (_e) {
+      // Private mode or full storage: it may play again on the next load.
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Reports panel
   // ---------------------------------------------------------------------------
 
@@ -425,7 +597,9 @@ export class ReporterUpdates {
     this._saveDraft();
     this.newStepIds = new Set(unseenSteps(report).map((s) => s.id));
     this.verdict = null;
+    this.reacting = null;
     this.pulseNow = true;
+    this._consumeReactions(report);
     this._openPanel({ name: "report", id }, { focusReply });
     this._markSeen(report);
   }
@@ -440,6 +614,7 @@ export class ReporterUpdates {
     this.panel = null;
     this.view = null;
     this.verdict = null;
+    this.reacting = null;
     this.newStepIds.clear();
     this.fab.setAttribute("aria-expanded", "false");
     const back = this.returnFocus;
@@ -448,6 +623,7 @@ export class ReporterUpdates {
     if (handoff) return;
     if (hadFocus && back?.isConnected && back !== document.body) back.focus({ preventScroll: true });
     this._tryShowPeek();
+    this._tryPlayReaction();
   }
 
   applyCorner() {
@@ -473,8 +649,12 @@ export class ReporterUpdates {
   _openPanel(view, { focusReply }) {
     // Clear the peek first: closing the form flushes pending peeks.
     this._hidePeek();
+    this.stopReaction();
     this.pendingPeek = null;
+    // Closing the form flushes waiting reactions too; the panel takes over.
+    this.openingPanel = true;
     this.host.closeForm();
+    this.openingPanel = false;
     if (!this.panel) this._buildPanel();
     this.view = view;
     this.fab.setAttribute("aria-expanded", "true");
@@ -524,7 +704,9 @@ export class ReporterUpdates {
   _onKeydown(e) {
     if (e.key !== "Escape") return;
     if (this.panel) {
-      if (this.verdict?.mode === "detail") {
+      if (this.reacting) {
+        this._closeTray();
+      } else if (this.verdict?.mode === "detail") {
         this.verdict = null;
         this._renderPanel();
         this.panel.querySelector("[data-action='broken']")?.focus();
@@ -539,13 +721,17 @@ export class ReporterUpdates {
   _onPanelClick(e) {
     const rowEl = e.target.closest("[data-report-id]");
     if (rowEl) return this.openReport(rowEl.dataset.reportId);
-    const action = e.target.closest("[data-action]")?.dataset.action;
+    const target = e.target.closest("[data-action]");
+    const action = target?.dataset.action;
+    // Any other click puts an open reaction tray away.
+    if (this.reacting && action !== "react" && action !== "react-open") this._closeTray(false);
     switch (action) {
       case "close":
         return this.closePanel();
       case "back":
         this._saveDraft();
         this.verdict = null;
+        this.reacting = null;
         this.view = { name: "list" };
         this._renderPanel({ fresh: true });
         return this._focusInitial(false);
@@ -562,6 +748,10 @@ export class ReporterUpdates {
       case "broken-cancel":
         this.verdict = null;
         return this._renderPanel();
+      case "react-open":
+        return this._toggleTray(target.dataset.stepId);
+      case "react":
+        return this._react(target.dataset.stepId, target.dataset.emoji);
     }
   }
 
@@ -714,10 +904,34 @@ export class ReporterUpdates {
       const text =
         step.kind === "verdict" ? (step.body === "works" ? T.worksNow : T.stillBroken) : step.body;
       const detail = step.kind === "verdict" && step.detail ? `<span class="fb-bubble-detail">${escapeHTML(step.detail)}</span>` : "";
-      return `<div class="fb-bubble fb-bubble-mine${step.pending ? " pending" : ""}"><span class="fb-bubble-by">${escapeHTML(T.you)} · </span>${escapeHTML(text)}${detail}</div>`;
+      // The team's emoji on the reporter's own message: shown, not changed.
+      const reaction = step.reaction
+        ? `<span class="fb-reaction" role="img" aria-label="${escapeHTML(fmt(T.reactedBy, { name: step.reaction.author_name || T.team, emoji: step.reaction.emoji }))}">${escapeHTML(step.reaction.emoji)}</span>`
+        : "";
+      return `<div class="fb-bubble fb-bubble-mine${step.pending ? " pending" : ""}${reaction ? " fb-has-reaction" : ""}"><span class="fb-bubble-by">${escapeHTML(T.you)} · </span>${escapeHTML(text)}${detail}${reaction}</div>`;
     }
     const by = step.author_name ? ` <span class="fb-bubble-by">${escapeHTML(step.author_name)}</span>` : "";
-    return `<div class="fb-bubble">${escapeHTML(step.body)}${by}</div>`;
+    if (!canReact(step)) return `<div class="fb-bubble">${escapeHTML(step.body)}${by}</div>`;
+    return `<div class="fb-bubble fb-has-reaction">${escapeHTML(step.body)}${by}${this._reactButtonHTML(step)}</div>${this.reacting === step.id ? this._trayHTML(step) : ""}`;
+  }
+
+  // The reaction slot on a team message's corner: the reporter's emoji,
+  // or a faint smiley (on hover, always on touch screens) to add one.
+  _reactButtonHTML(step) {
+    const { T } = this;
+    const emoji = step.reaction?.emoji;
+    const label = emoji ? fmt(T.yourReaction, { emoji }) : T.react;
+    const open = this.reacting === step.id;
+    return `<button type="button" class="fb-reaction${emoji ? "" : " fb-reaction-add"}" data-action="react-open" data-step-id="${escapeHTML(step.id)}" aria-label="${escapeHTML(label)}" aria-expanded="${open}">${emoji ? escapeHTML(emoji) : smileyIcon()}</button>`;
+  }
+
+  _trayHTML(step) {
+    const { T } = this;
+    const buttons = REACTIONS.map(
+      (emoji) =>
+        `<button type="button" data-action="react" data-step-id="${escapeHTML(step.id)}" data-emoji="${escapeHTML(emoji)}" aria-pressed="${step.reaction?.emoji === emoji}">${escapeHTML(emoji)}</button>`,
+    ).join("");
+    return `<div class="fb-reaction-tray" role="group" aria-label="${escapeHTML(T.reactions)}">${buttons}</div>`;
   }
 
   _verdictHTML(report) {
@@ -750,6 +964,58 @@ export class ReporterUpdates {
   // ---------------------------------------------------------------------------
   // Reporter → team: replies and verdicts
   // ---------------------------------------------------------------------------
+
+  _toggleTray(stepId) {
+    this.reacting = this.reacting === stepId ? null : stepId;
+    this._renderPanel();
+    if (!this.reacting) return;
+    const tray = this.panel.querySelector(".fb-reaction-tray");
+    (tray?.querySelector("[aria-pressed='true']") || tray?.querySelector("button"))?.focus({
+      preventScroll: true,
+    });
+  }
+
+  // Esc or a click elsewhere; Esc hands focus back to the slot.
+  _closeTray(refocus = true) {
+    const stepId = this.reacting;
+    this.reacting = null;
+    this._renderPanel();
+    if (refocus) this._focusReactButton(stepId);
+  }
+
+  _focusReactButton(stepId) {
+    this.panel
+      ?.querySelector(`[data-action="react-open"][data-step-id="${CSS.escape(stepId)}"]`)
+      ?.focus({ preventScroll: true });
+  }
+
+  // Shows at once; rolled back with a toast on failure. The emoji that is
+  // already there takes the reaction back.
+  _react(stepId, emoji) {
+    if (this.view?.name !== "report") return;
+    const report = this._report(this.view.id);
+    const step = report?.steps?.find((s) => s.id === stepId);
+    if (!step || !canReact(step)) return;
+    const next = nextReaction(step, emoji);
+    const before = step.reaction || null;
+    this.reacting = null;
+    this.reports = upsertReport(this.reports, withReaction(report, stepId, next));
+    this._changed();
+    this._focusReactButton(stepId);
+    this._push("react", { id: report.id, step_id: stepId, emoji: next })
+      .then((updated) => this._accept(updated))
+      .catch(() => {
+        const current = this._report(report.id);
+        if (current) {
+          this.reports = upsertReport(
+            this.reports,
+            withReaction(current, stepId, before?.emoji, before?.at),
+          );
+        }
+        this._changed();
+        this.host.toast(this.T.reactFailed);
+      });
+  }
 
   _saveDraft() {
     if (this.view?.name !== "report" || !this.panel) return;
@@ -845,12 +1111,29 @@ export class ReporterUpdates {
   }
 }
 
+function loadShownReactions() {
+  try {
+    const keys = JSON.parse(localStorage.getItem(SHOWN_REACTIONS_KEY) || "[]");
+    return new Set(Array.isArray(keys) ? keys : []);
+  } catch (_e) {
+    return new Set();
+  }
+}
+
 // Selector that finds the same control again after a re-render.
 function focusSelector(el) {
   if (el.dataset.reportId) return `[data-report-id="${CSS.escape(el.dataset.reportId)}"]`;
-  if (el.dataset.action) return `[data-action="${CSS.escape(el.dataset.action)}"]`;
+  if (el.dataset.action) {
+    const step = el.dataset.stepId ? `[data-step-id="${CSS.escape(el.dataset.stepId)}"]` : "";
+    const emoji = el.dataset.emoji ? `[data-emoji="${CSS.escape(el.dataset.emoji)}"]` : "";
+    return `[data-action="${CSS.escape(el.dataset.action)}"]${step}${emoji}`;
+  }
   if (el.matches(".fb-verdict-detail")) return ".fb-verdict-detail";
   return null;
+}
+
+function smileyIcon() {
+  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M5.6 9.4c.6.8 1.4 1.2 2.4 1.2s1.8-.4 2.4-1.2"/><path d="M6 6.4h.01M10 6.4h.01" stroke-width="1.8"/></svg>`;
 }
 
 function backIcon() {

@@ -27,7 +27,7 @@ should read [README.md](README.md) instead.
 
 ```bash
 # 1. Add the dep — append to the deps/0 list in mix.exs:
-#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.1"}
+#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
 
 # 2. Pull
 mix deps.get
@@ -155,7 +155,7 @@ Payload schema (snake_case, no camelCase fallbacks):
   "user_agent": "string",
   "console_buffer": [{ "level": "log|warn|error", "message": "string", "timestamp": 0 }],
   "context": { /* arbitrary, opaque to server */ },
-  "reporter": { "email": "string|null", "id": "string|null", "metadata": { /* opaque */ } },
+  "reporter": { "email": "string|null", "id": "string|null", "name": "string|null", "metadata": { /* opaque */ } },
   "replay_duration_ms": 0
 }
 ```
