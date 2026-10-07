@@ -10,7 +10,9 @@
 // DOM contract: mount on a single empty <div id="hi-pulse-widget"
 // phx-hook="HiPulse" data-reporter="..." data-context="..."
 // data-project-slug="..." data-server-url="..."> — see
-// HiPulse.Components.pulse_widget/1.
+// HiPulse.Components.pulse_widget/1. With `data-reporter-token` (signed
+// from HI_PULSE_SECRET) the widget also shows reporter updates; see
+// reporter_updates.js.
 //
 // String table is kept inline for v1 (German). Phase 2: pull from
 // data-i18n="..." JSON when the widget is enabled for non-DE tenants.
@@ -25,6 +27,8 @@ import {
   pauseRecorder,
   resumeRecorder,
 } from "./replay_recorder.js";
+import { ReporterUpdates } from "./reporter_updates.js";
+import { titleize } from "./reporter_view.js";
 
 // Defaults for the type/priority dropdowns when the server-side config
 // hasn't loaded yet (or fails to load). Match the server's defaults so a
@@ -90,6 +94,58 @@ const T = {
     "bottom-left": "Bottom left",
     "bottom-right": "Bottom right",
   },
+  // Reporter updates (on when the host sets HI_PULSE_SECRET). `{name}`
+  // marks a value filled in at runtime; keep it when translating.
+  fabUpdate: "Feedback, 1 update",
+  fabUpdates: "Feedback, {count} updates",
+  yourReports: "Your reports",
+  newReport: "New report",
+  back: "Back",
+  close: "Close",
+  reconnecting: "Reconnecting…",
+  reportsEmpty: "No reports yet",
+  unread: "new update",
+  status: {
+    received: "Received",
+    in_progress: "In progress",
+    needs_info: "Needs info",
+    fixed: "Fixed",
+    closed: "Closed",
+  },
+  stepQuestion: "Team asked",
+  // Shown under the current step.
+  stepHint: {
+    received: "Your report reached the team",
+    in_progress: "The team is working on it",
+    fixed: "Live now. Try it and tell us if it works.",
+    closed: "No further work planned",
+  },
+  stepTodoFixed: "We'll tell you when it's live",
+  reportedOn: "reported {date}",
+  newTag: "New",
+  you: "You",
+  worksNow: "Works now",
+  stillBroken: "Still broken",
+  brokenPlaceholder: "What's still wrong? (optional)",
+  replyPlaceholder: "Add a detail for the team…",
+  answerPlaceholder: "Answer the team…",
+  replyFailed: "Couldn't send your message",
+  peekFixed: "Fixed: {title}",
+  peekFixedSub: "Live now · try it and tell us if it works",
+  peekQuestion: "The team asked about your report",
+  peekQuestionSub: "click to answer",
+  peekMany: "{count} updates on your reports",
+  peekManySub: "Open your reports",
+  // Fills <HiPulse.Components.release_note /> in the host's reload banner.
+  releaseNote: "Includes your fix: {title}",
+  time: {
+    justNow: "just now",
+    minutes: "{n} min ago",
+    hours: "{n}h ago",
+    yesterday: "Yesterday",
+  },
+  // Dates like "2 Oct"; any BCP 47 tag Intl.DateTimeFormat accepts.
+  locale: "en-GB",
 };
 
 // Re-export so consumer apps can patch individual strings if they
@@ -150,6 +206,30 @@ export const PulseWidgetHook = {
       });
     }
     this._loadConfig();
+    if (this.el.dataset.reporterToken) {
+      this.updates = new ReporterUpdates({
+        serverUrl: this.serverUrl,
+        token: this.token,
+        reporterToken: this.el.dataset.reporterToken,
+        fab: this.fab,
+        T,
+        host: {
+          corner: () => this.corner,
+          formOpen: () => Boolean(this.formPanel || this.annotatorOverlay),
+          closeForm: () => {
+            if (this.formPanel || this.annotatorOverlay) this._close();
+          },
+          openForm: () => this._open(),
+          toast: (message) => this._toast(message),
+          keepScroll: (fn) => {
+            const snap = this._snapshotScroll();
+            fn();
+            this._restoreScroll(snap);
+          },
+          onChange: () => this._syncReportsLink(),
+        },
+      });
+    }
   },
 
   // Fetch the project's allowed event types + priorities from the
@@ -183,6 +263,8 @@ export const PulseWidgetHook = {
   },
 
   destroyed() {
+    if (this.updates) this.updates.destroy();
+    this.updates = null;
     this._destroyFormPanel();
     this._destroyAnnotator();
     this._closeCornerMenu();
@@ -204,9 +286,15 @@ export const PulseWidgetHook = {
     fab.addEventListener("pointerdown", (e) => {
       e.preventDefault();
     });
+    // With unseen reporter updates the FAB leads to them; otherwise it
+    // opens the feedback form as always.
     fab.addEventListener("click", () => {
       if (this.formPanel || this.annotatorOverlay) {
         this._close();
+      } else if (this.updates?.panelOpen) {
+        this.updates.closePanel();
+      } else if (this.updates?.unseenCount()) {
+        this.updates.openFromFab();
       } else {
         this._open();
       }
@@ -271,6 +359,7 @@ export const PulseWidgetHook = {
       }
       this._applyCorner();
       this._applyFormPanelCorner();
+      this.updates?.applyCorner();
       this._closeCornerMenu();
     });
 
@@ -308,6 +397,7 @@ export const PulseWidgetHook = {
 
   _open() {
     if (this.formPanel || this.annotatorOverlay) return;
+    this.updates?.closePanel({ handoff: true });
     // Freeze the rrweb buffer at this moment — we don't want the form-filling
     // or annotation activity in the recording.
     pauseRecorder();
@@ -374,6 +464,7 @@ export const PulseWidgetHook = {
         <div class="fb-fields-col">
           <header class="fb-panel-head">
             <h3>${T.panelTitle}</h3>
+            <button type="button" class="fb-head-link" data-action="your-reports" hidden></button>
           </header>
           <div class="fb-panel-body">
             ${
@@ -454,6 +545,12 @@ export const PulseWidgetHook = {
 
     panel.querySelector("[data-action='cancel']").addEventListener("click", () => this._close());
 
+    // Opening the reports panel closes this form.
+    panel.querySelector("[data-action='your-reports']").addEventListener("click", () => {
+      this.updates?.openList();
+    });
+    this._syncReportsLink();
+
     panel.querySelector("form").addEventListener("submit", (e) => {
       e.preventDefault();
       this._submit();
@@ -467,6 +564,21 @@ export const PulseWidgetHook = {
     document.addEventListener("keydown", this._formKeyHandler);
 
     panel.querySelector("input[name=title]").focus({ preventScroll: true });
+  },
+
+  // "Your reports" link in the form header, once the reporter has any.
+  _syncReportsLink() {
+    const link = this.formPanel?.querySelector("[data-action='your-reports']");
+    if (!link) return;
+    link.hidden = !this.updates?.hasReports();
+    const count = this.updates?.unseenCount() || 0;
+    link.textContent = T.yourReports;
+    if (count) {
+      const badge = document.createElement("span");
+      badge.className = "fb-count";
+      badge.textContent = String(count);
+      link.append(" ", badge);
+    }
   },
 
   _applyFormPanelCorner() {
@@ -845,6 +957,8 @@ export const PulseWidgetHook = {
     // Whether the user submitted or cancelled, recording resumes from a
     // fresh slate so the next bug report can capture activity that follows.
     resumeRecorder();
+    // A reporter update that arrived while the form was open can show now.
+    this.updates?.flushPeek();
   },
 
   _toast(message, linkUrl, options = {}) {
@@ -1033,14 +1147,6 @@ function parseJSON(raw, fallback) {
   } catch (_e) {
     return fallback;
   }
-}
-
-// "feature-request" → "Feature request" — fallback for type/priority
-// keys the host hasn't translated in T.type / T.priority.
-function titleize(key) {
-  return key
-    .replace(/[-_]+/g, " ")
-    .replace(/^./, (c) => c.toUpperCase());
 }
 
 function topicKeys() {

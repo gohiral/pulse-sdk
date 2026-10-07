@@ -13,13 +13,17 @@ defmodule Mix.Tasks.HiPulse.Install do
 
       $ mix hi_pulse.install --token=hif_live_... --server-url=https://pulse.hiral.io --capture-errors=prod-only
 
+  `--secret=hif_secret_...` sets the project's reporter secret, which
+  turns on reporter updates. It's optional and never prompted for; add
+  `HI_PULSE_SECRET` later by re-running with `--secret`.
+
   `--capture-errors` accepts `prod-only` (default), `all`, or `off` —
   see the prompt below for what each means.
 
   ## What it does
 
-  1. Prompts for `HI_PULSE_TOKEN` + `HI_PULSE_SERVER_URL` and
-     appends them to `.env` (when present).
+  1. Prompts for `HI_PULSE_TOKEN`, `HI_PULSE_SERVER_URL` and the
+     optional `HI_PULSE_SECRET` and appends them to `.env` (when present).
   2. Idempotently patches six files:
      * `config/runtime.exs` — appends the `config :hi_pulse` block.
      * `lib/<app>_web/components/layouts/root.html.heex` — drops the
@@ -52,6 +56,7 @@ defmodule Mix.Tasks.HiPulse.Install do
         strict: [
           token: :string,
           server_url: :string,
+          secret: :string,
           capture_errors: :string,
           build_assets: :boolean
         ]
@@ -127,11 +132,16 @@ defmodule Mix.Tasks.HiPulse.Install do
           "https://pulse.hiral.io"
         )
 
+    # Optional and never prompted, so scripted installs that predate it
+    # keep running unattended.
+    secret = opts[:secret] || ""
+
     capture_errors = opts[:capture_errors] || prompt_capture_errors()
 
     %{
       token: String.trim(token),
       server_url: String.trim(server_url),
+      secret: String.trim(secret),
       capture_errors: normalize_capture_errors(capture_errors)
     }
   end
@@ -176,33 +186,66 @@ defmodule Mix.Tasks.HiPulse.Install do
 
   defp maybe_update_dotenv(%{token: ""}), do: :ok
 
-  defp maybe_update_dotenv(%{token: token, server_url: server_url}) do
+  defp maybe_update_dotenv(env) do
     case File.read(".env") do
       {:ok, contents} ->
-        if String.contains?(contents, "HI_PULSE_TOKEN") do
-          Mix.shell().info("  · .env already mentions HI_PULSE_TOKEN — leaving it alone")
-        else
-          block = """
+        case patch_dotenv(contents, env) do
+          {^contents, []} ->
+            Mix.shell().info("  · .env already mentions the hi_pulse vars — leaving it alone")
 
-
-          # hi_pulse widget
-          HI_PULSE_TOKEN="#{token}"
-          HI_PULSE_SERVER_URL="#{server_url}"
-          """
-
-          File.write!(".env", String.trim_trailing(contents) <> block)
-          Mix.shell().info("  ✓ .env — appended HI_PULSE_TOKEN + HI_PULSE_SERVER_URL")
+          {patched, keys} ->
+            File.write!(".env", patched)
+            Mix.shell().info("  ✓ .env — appended #{Enum.join(keys, " + ")}")
         end
 
       {:error, :enoent} ->
+        exports =
+          env
+          |> dotenv_vars()
+          |> Enum.map_join("\n", fn {key, value} -> ~s(    export #{key}="#{value}") end)
+
         Mix.shell().info("""
 
         [hi_pulse] No .env file found — set these in your environment:
 
-            export HI_PULSE_TOKEN="#{token}"
-            export HI_PULSE_SERVER_URL="#{server_url}"
+        #{exports}
         """)
     end
+  end
+
+  # Appends the hi_pulse vars `.env` doesn't mention yet. The token and
+  # server URL travel together (keyed on HI_PULSE_TOKEN, as before); the
+  # secret has its own marker so re-running the installer with
+  # `--secret` adds it to an existing install. Returns the new contents
+  # and the appended keys.
+  @doc false
+  def patch_dotenv(contents, env) do
+    vars =
+      env
+      |> dotenv_vars()
+      |> Enum.reject(fn {key, _} ->
+        marker = if key == "HI_PULSE_SERVER_URL", do: "HI_PULSE_TOKEN", else: key
+        String.contains?(contents, marker)
+      end)
+
+    case vars do
+      [] ->
+        {contents, []}
+
+      vars ->
+        lines = Enum.map_join(vars, "\n", fn {key, value} -> ~s(#{key}="#{value}") end)
+        block = "\n\n# hi_pulse widget\n" <> lines <> "\n"
+        {String.trim_trailing(contents) <> block, Enum.map(vars, &elem(&1, 0))}
+    end
+  end
+
+  defp dotenv_vars(env) do
+    [
+      {"HI_PULSE_TOKEN", env.token},
+      {"HI_PULSE_SERVER_URL", env.server_url},
+      {"HI_PULSE_SECRET", env.secret}
+    ]
+    |> Enum.reject(fn {_key, value} -> value == "" end)
   end
 
   defp print_done(%{token: ""}, built?) do
@@ -217,7 +260,7 @@ defmodule Mix.Tasks.HiPulse.Install do
     """)
   end
 
-  defp print_done(_env, built?) do
+  defp print_done(env, built?) do
     Mix.shell().info("""
 
     [hi_pulse] done.
@@ -226,8 +269,19 @@ defmodule Mix.Tasks.HiPulse.Install do
 
     Then click the floating "Feedback" button — first submission round-trips
     in seconds. If anything's off, run `mix hi_pulse.doctor`.
+    #{secret_hint(env)}
     """)
   end
+
+  defp secret_hint(%{secret: ""}) do
+    """
+
+    Reporter updates stay off until HI_PULSE_SECRET is set: rotate the
+    project's reporter secret in pulse and add it to your environment.
+    """
+  end
+
+  defp secret_hint(_env), do: ""
 
   # The remaining manual steps after install. If we successfully ran
   # `assets.build`, drop the rebuild step — but the server restart and
@@ -337,7 +391,9 @@ defmodule Mix.Tasks.HiPulse.Install do
       server_url:
         System.get_env("HI_PULSE_SERVER_URL") || "https://pulse.hiral.io",
       token: System.fetch_env!("HI_PULSE_TOKEN"),
-      project_slug: System.get_env("HI_PULSE_PROJECT_SLUG")
+      project_slug: System.get_env("HI_PULSE_PROJECT_SLUG"),
+      # Reporter secret — optional, enables reporter updates.
+      secret: System.get_env("HI_PULSE_SECRET")
     """
   end
 
@@ -359,7 +415,8 @@ defmodule Mix.Tasks.HiPulse.Install do
         server_url:
           Dotenvy.env!("HI_PULSE_SERVER_URL", :string, "https://pulse.hiral.io"),
         token: Dotenvy.env!("HI_PULSE_TOKEN", :string!),
-        project_slug: Dotenvy.env!("HI_PULSE_PROJECT_SLUG", :string, nil)
+        project_slug: Dotenvy.env!("HI_PULSE_PROJECT_SLUG", :string, nil),
+        secret: Dotenvy.env!("HI_PULSE_SECRET", :string, nil)
     end
 
     if config_env() == :prod do
@@ -367,7 +424,8 @@ defmodule Mix.Tasks.HiPulse.Install do
         server_url:
           System.get_env("HI_PULSE_SERVER_URL") || "https://pulse.hiral.io",
         token: System.fetch_env!("HI_PULSE_TOKEN"),
-        project_slug: System.get_env("HI_PULSE_PROJECT_SLUG")
+        project_slug: System.get_env("HI_PULSE_PROJECT_SLUG"),
+        secret: System.get_env("HI_PULSE_SECRET")
     end
     """
   end
@@ -643,7 +701,7 @@ defmodule Mix.Tasks.HiPulse.Install do
   defp manual_snippet(path) do
     cond do
       path == "config/runtime.exs" ->
-        ~s|config :hi_pulse,\n  server_url: …, token: …, project_slug: …|
+        ~s|config :hi_pulse,\n  server_url: …, token: …, project_slug: …, secret: …|
 
       String.ends_with?(path, "/components/layouts/root.html.heex") ->
         "<HiPulse.Components.pulse_widget enabled?={…} … />"

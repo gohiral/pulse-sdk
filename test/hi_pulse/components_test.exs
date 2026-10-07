@@ -14,6 +14,7 @@ defmodule HiPulse.ComponentsTest do
       Application.delete_env(:hi_pulse, :token)
       Application.delete_env(:hi_pulse, :server_url)
       Application.delete_env(:hi_pulse, :project_slug)
+      Application.delete_env(:hi_pulse, :secret)
     end)
 
     :ok
@@ -70,6 +71,58 @@ defmodule HiPulse.ComponentsTest do
         )
 
       assert html =~ ~s(id="custom-feedback")
+    end
+
+    test "stamps a verifiable reporter token when a secret is configured" do
+      secret = "hif_secret_component_test_0123456789abcdef"
+      Application.put_env(:hi_pulse, :secret, secret)
+
+      html =
+        render_component(&Components.pulse_widget/1,
+          enabled?: true,
+          reporter: %{email: "alice@example.com", id: 7}
+        )
+
+      [_, token] = Regex.run(~r/data-reporter-token="([^"]+)"/, html)
+
+      assert {:ok, %{"e" => "alice@example.com", "i" => "7"}} =
+               Phoenix.Token.verify(secret, "hi_pulse reporter v1", token)
+    end
+
+    test "omits the reporter token without a secret or a reporter identity" do
+      html =
+        render_component(&Components.pulse_widget/1,
+          enabled?: true,
+          reporter: %{email: "alice@example.com"}
+        )
+
+      refute html =~ "data-reporter-token"
+
+      Application.put_env(:hi_pulse, :secret, "hif_secret_component_test_0123456789abcdef")
+      html = render_component(&Components.pulse_widget/1, enabled?: true, reporter: %{})
+      refute html =~ "data-reporter-token"
+    end
+  end
+
+  describe "release_note/1" do
+    test "renders a hidden slot LiveView leaves alone" do
+      html = render_component(&Components.release_note/1, %{})
+
+      assert html =~ "data-hi-pulse-release-note"
+      assert html =~ ~s(id="hi-pulse-release-note")
+      assert html =~ ~s(phx-update="ignore")
+      assert html =~ "hidden"
+    end
+
+    test "accepts a class and a custom id" do
+      html =
+        render_component(&Components.release_note/1,
+          class: "text-xs text-secondary",
+          id: "banner-fix-line"
+        )
+
+      assert html =~ ~s(class="text-xs text-secondary")
+      assert html =~ ~s(id="banner-fix-line")
     end
   end
 end

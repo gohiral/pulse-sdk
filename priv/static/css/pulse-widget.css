@@ -21,6 +21,10 @@
   --color-error: oklch(62% 0.18 15);
   --color-warning: oklch(88% 0.14 92);
   --color-active: oklch(65% 0.15 250);
+  --color-success: oklch(65% 0.18 145);
+  --color-pending: oklch(70% 0 0);
+  --color-muted: oklch(75% 0 0);
+  --color-raised: oklch(96% 0 0);
 }
 
 :where([data-theme="dark"]) {
@@ -32,6 +36,9 @@
   --color-ink: oklch(92% 0.01 60);
   --color-secondary: oklch(55% 0.005 60);
   --color-tertiary: oklch(48% 0.004 60);
+  --color-pending: oklch(42% 0.004 60);
+  --color-muted: oklch(38% 0.004 60);
+  --color-raised: oklch(19% 0.005 60);
 }
 
 .fb-fab {
@@ -332,6 +339,10 @@
 
 .fb-panel-head {
   padding: 16px 20px 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .fb-panel-head h3 {
@@ -917,4 +928,640 @@
   box-shadow:
     0 4px 12px rgb(0 0 0 / 0.5),
     0 1px 3px rgb(0 0 0 / 0.3);
+}
+
+/* ===========================================================================
+   Reporter updates — FAB dot, peek, reports panel (list + timeline) and the
+   release-note line in the host's reload banner. Status colours follow the
+   pulse palette: needs info amber, fixed green, in progress blue, received
+   grey, closed muted.
+   =========================================================================== */
+
+/* `--fb-status` carries the colour; timeline nodes inherit it from their step. */
+.fb-status-dot,
+.fb-fab-dot,
+.fb-step {
+  --fb-status: var(--color-tertiary);
+}
+
+:is(.fb-status-dot, .fb-fab-dot, .fb-step)[data-status="received"] { --fb-status: var(--color-pending); }
+:is(.fb-status-dot, .fb-fab-dot, .fb-step)[data-status="in_progress"] { --fb-status: var(--color-active); }
+:is(.fb-status-dot, .fb-fab-dot, .fb-step)[data-status="needs_info"] { --fb-status: var(--color-warning); }
+:is(.fb-status-dot, .fb-fab-dot, .fb-step)[data-status="fixed"] { --fb-status: var(--color-success); }
+:is(.fb-status-dot, .fb-fab-dot, .fb-step)[data-status="closed"] { --fb-status: var(--color-muted); }
+
+.fb-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--fb-status);
+  flex-shrink: 0;
+}
+
+@keyframes fb-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Unseen updates: a 10px dot on the FAB, ringed in canvas so it reads on
+   any page background. Hidden while a panel is open. */
+.fb-fab-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--fb-status);
+  box-shadow: 0 0 0 2px var(--color-canvas);
+  animation: fb-fade-in 150ms ease-in-out;
+  pointer-events: none;
+}
+
+.fb-fab[aria-expanded="true"] .fb-fab-dot,
+.fb-fab-dot[hidden] {
+  display: none;
+}
+
+/* "Your reports" link in the feedback form header. */
+.fb-head-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-secondary);
+  cursor: pointer;
+  transition: color 100ms ease;
+}
+
+.fb-head-link:hover {
+  color: var(--color-ink);
+}
+
+.fb-head-link[hidden] {
+  display: none;
+}
+
+.fb-count {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+}
+
+.fb-btn-sm {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.fb-icon-btn {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-tertiary);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.fb-icon-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.fb-icon-btn:focus-visible,
+.fb-head-link:focus-visible,
+.fb-peek-card:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: 2px;
+}
+
+.fb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fb-mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Peek: a one-line card that rises above the FAB. Top/bottom/left/right are
+   set inline by the hook to follow the FAB corner. */
+.fb-peek {
+  position: fixed;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  z-index: 9999;
+  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 300ms ease-in-out, transform 300ms ease-in-out;
+}
+
+.fb-peek.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.fb-peek[hidden] {
+  display: none;
+}
+
+.fb-peek-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-edge);
+  border-radius: 8px;
+  background: var(--color-canvas);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 24px 56px rgb(0 0 0 / 0.16),
+    0 8px 16px rgb(0 0 0 / 0.08),
+    0 0 0 1px rgb(0 0 0 / 0.04);
+}
+
+.fb-peek-card .fb-status-dot {
+  margin-top: 6px;
+}
+
+.fb-peek-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fb-peek-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.fb-peek-sub {
+  font-size: 12px;
+  color: var(--color-secondary);
+}
+
+.fb-peek-quote {
+  margin-top: 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--color-edge-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fb-peek-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-tertiary);
+}
+
+.fb-peek-chev {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--color-tertiary);
+  transition: color 100ms ease;
+}
+
+.fb-peek-card:hover .fb-peek-chev {
+  color: var(--color-ink);
+}
+
+/* Reports panel: same corner anchoring as the form panel, one 400px column. */
+.fb-reports-panel {
+  position: fixed;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  z-index: 9999;
+  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.fb-rp {
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(100vh - 96px));
+  overflow: hidden;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-edge);
+  border-radius: 8px;
+  box-shadow:
+    0 24px 56px rgb(0 0 0 / 0.16),
+    0 8px 16px rgb(0 0 0 / 0.08),
+    0 0 0 1px rgb(0 0 0 / 0.04);
+}
+
+[data-theme="dark"] .fb-rp,
+[data-theme="dark"] .fb-peek-card {
+  box-shadow:
+    0 24px 56px rgb(0 0 0 / 0.55),
+    0 8px 16px rgb(0 0 0 / 0.4),
+    0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+.fb-rp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--color-edge);
+}
+
+.fb-rp-head-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fb-rp-head-left .fb-icon-btn {
+  margin-left: -6px;
+}
+
+.fb-rp-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.fb-rp-crumb {
+  font-size: 12px;
+  color: var(--color-secondary);
+}
+
+.fb-conn {
+  font-size: 12px;
+  color: var(--color-tertiary);
+}
+
+.fb-rp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* List view (Variant 1 rows). */
+.fb-rp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fb-rp-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--color-edge);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.fb-rp-list li:last-child .fb-rp-row {
+  border-bottom: 0;
+}
+
+.fb-rp-row:hover {
+  background: var(--color-surface);
+}
+
+.fb-rp-row:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: -2px;
+}
+
+.fb-unread {
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 150ms ease;
+}
+
+.fb-rp-row.unread .fb-unread {
+  background: var(--color-ink);
+}
+
+.fb-rp-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fb-rp-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-secondary);
+}
+
+.fb-rp-time {
+  font-size: 12px;
+  color: var(--color-tertiary);
+  white-space: nowrap;
+}
+
+.fb-rp-row-title {
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--color-secondary);
+  overflow-wrap: anywhere;
+}
+
+.fb-rp-row.unread .fb-rp-row-title {
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.fb-rp-row-excerpt {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-rp-empty {
+  margin: 0;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--color-secondary);
+}
+
+/* Timeline view (Variant 3): every step with node + line, team messages
+   as bubbles on their step, the reporter's own as a darker bubble. */
+.fb-rp-report-head {
+  padding: 14px 16px 0;
+}
+
+.fb-rp-report-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.fb-rp-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-tertiary);
+}
+
+.fb-tl {
+  list-style: none;
+  margin: 0;
+  padding: 16px 16px 4px;
+}
+
+.fb-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.fb-step::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--color-edge-soft);
+}
+
+.fb-step[data-state="done"]::before {
+  background: var(--color-edge-strong);
+}
+
+.fb-step:last-child::before {
+  display: none;
+}
+
+.fb-step-node {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 1px solid var(--color-edge-strong);
+  border-radius: 999px;
+  background: var(--color-canvas);
+  box-sizing: border-box;
+}
+
+.fb-step[data-state="done"] .fb-step-node {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-canvas);
+}
+
+.fb-step[data-state="now"] .fb-step-node {
+  background: var(--fb-status);
+  border-color: var(--fb-status);
+  color: white;
+}
+
+/* The current step's node pulses once when it opens on a fresh change. */
+@keyframes fb-node-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.fb-step-node.fb-pulse {
+  animation: fb-node-pulse 600ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-step-node.fb-pulse,
+  .fb-fab-dot {
+    animation: none;
+  }
+
+  .fb-peek {
+    transition: none;
+  }
+}
+
+.fb-step-main {
+  min-width: 0;
+}
+
+.fb-step-label {
+  margin: 0;
+  font-weight: 500;
+}
+
+.fb-step[data-state="todo"] {
+  color: var(--color-tertiary);
+}
+
+.fb-step[data-state="todo"] .fb-step-label {
+  font-weight: 400;
+}
+
+.fb-step-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-secondary);
+}
+
+.fb-step[data-state="todo"] .fb-step-hint {
+  color: inherit;
+}
+
+.fb-step-time {
+  font-size: 12px;
+  color: var(--color-tertiary);
+  white-space: nowrap;
+}
+
+.fb-new-tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  vertical-align: 1px;
+}
+
+.fb-bubble {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fb-bubble-mine {
+  background: var(--color-raised);
+}
+
+.fb-bubble-mine.pending {
+  opacity: 0.6;
+}
+
+.fb-bubble-by {
+  font-size: 12px;
+  color: var(--color-tertiary);
+}
+
+.fb-bubble-detail {
+  display: block;
+  margin-top: 2px;
+}
+
+.fb-verdict {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fb-verdict[data-mode="detail"] {
+  flex-direction: column;
+}
+
+.fb-verdict-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Reply field below the timeline; grows to three lines on focus. */
+.fb-rp-reply {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-edge);
+}
+
+.fb-rp-reply[hidden] {
+  display: none;
+}
+
+.fb-rp-reply .fb-textarea {
+  flex: 1;
+  min-height: 36px;
+  transition: border-color 100ms ease, outline 100ms ease, min-height 100ms ease;
+}
+
+.fb-rp-reply .fb-textarea:focus {
+  min-height: 78px;
+}
+
+/* Release note: the line the widget writes into the host's reload banner
+   (<HiPulse.Components.release_note />). The host's class styles the text. */
+[data-hi-pulse-release-note][hidden] {
+  display: none !important;
+}
+
+.fb-release-note .fb-status-dot {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+@media (max-width: 600px) {
+  .fb-reports-panel,
+  .fb-peek {
+    width: auto;
+    left: 16px !important;
+    right: 16px !important;
+  }
 }

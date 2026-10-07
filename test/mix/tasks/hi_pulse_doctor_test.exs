@@ -289,6 +289,84 @@ defmodule Mix.Tasks.HiPulse.DoctorTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Reporter updates — secret + NODE_PATH, both WARN-only
+  # ---------------------------------------------------------------------------
+
+  describe "check_secret/1" do
+    # The OS env is global, so these tests only pass when the doctor sees no
+    # HI_PULSE_SECRET there; the SDK's own test env never sets it.
+    test "WARN — no HI_PULSE_SECRET anywhere", %{tmp_dir: tmp} do
+      write!(tmp, ".env", ~s|HI_PULSE_TOKEN="hif_live_abc"\n|)
+
+      {status, _, msg, _} = run_check(&Doctor.check_secret/1, tmp)
+      assert status == :warn
+      assert msg =~ "reporter updates disabled"
+    end
+
+    test "WARN — an empty HI_PULSE_SECRET counts as missing", %{tmp_dir: tmp} do
+      write!(tmp, ".env", ~s|HI_PULSE_SECRET=""\n|)
+
+      {status, _, msg, _} = run_check(&Doctor.check_secret/1, tmp)
+      assert status == :warn
+      assert msg =~ "not set"
+    end
+
+    test "WARN — set in .env but runtime.exs doesn't read it", %{tmp_dir: tmp} do
+      write!(tmp, ".env", ~s|HI_PULSE_SECRET="hif_secret_xyz"\n|)
+
+      write!(
+        tmp,
+        "config/runtime.exs",
+        ~s|config :hi_pulse, token: System.fetch_env!("HI_PULSE_TOKEN")\n|
+      )
+
+      {status, _, msg, _} = run_check(&Doctor.check_secret/1, tmp)
+      assert status == :warn
+      assert msg =~ "doesn't read it"
+    end
+
+    test "OK — set in .env and read by runtime.exs", %{tmp_dir: tmp} do
+      write!(tmp, ".env", ~s|HI_PULSE_SECRET="hif_secret_xyz"\n|)
+
+      write!(
+        tmp,
+        "config/runtime.exs",
+        ~s|config :hi_pulse, secret: System.get_env("HI_PULSE_SECRET")\n|
+      )
+
+      {status, _, _, _} = run_check(&Doctor.check_secret/1, tmp)
+      assert status == :ok
+    end
+  end
+
+  describe "check_node_path/1" do
+    test "OK — stock phx.new 1.8 esbuild env", %{tmp_dir: tmp} do
+      write!(tmp, "config/config.exs", """
+      config :esbuild,
+        my_app: [
+          args: ~w(js/app.js --bundle),
+          cd: Path.expand("../assets", __DIR__),
+          env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
+        ]
+      """)
+
+      {status, _, _, _} = run_check(&Doctor.check_node_path/1, tmp)
+      assert status == :ok
+    end
+
+    test "WARN — esbuild env without NODE_PATH", %{tmp_dir: tmp} do
+      write!(tmp, "config/config.exs", """
+      config :esbuild,
+        my_app: [args: ~w(js/app.js --bundle), cd: Path.expand("../assets", __DIR__)]
+      """)
+
+      {status, _, msg, _} = run_check(&Doctor.check_node_path/1, tmp)
+      assert status == :warn
+      assert msg =~ "NODE_PATH"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Other checks — single-shape OK paths (broader matrix would be redundant)
   # ---------------------------------------------------------------------------
 

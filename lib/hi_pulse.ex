@@ -31,7 +31,10 @@ defmodule HiPulse do
         # Per-project token issued from the feedback admin UI.
         token: System.fetch_env!("HI_PULSE_TOKEN"),
         # Optional: project slug, used purely for "View in feedback" links.
-        project_slug: System.get_env("HI_PULSE_PROJECT_SLUG")
+        project_slug: System.get_env("HI_PULSE_PROJECT_SLUG"),
+        # Optional: the project's reporter secret. Enables reporter updates
+        # (reporters see status changes, questions and fixes in the widget).
+        secret: System.get_env("HI_PULSE_SECRET")
 
   ## Integration
 
@@ -90,5 +93,53 @@ defmodule HiPulse do
   @spec capture_errors?() :: boolean()
   def capture_errors? do
     Application.get_env(:hi_pulse, :capture_errors, false) == true
+  end
+
+  @doc """
+  Returns the project's reporter secret, or `nil` when it is unset or
+  blank. Without a secret the widget runs without reporter updates.
+  """
+  @spec secret() :: String.t() | nil
+  def secret do
+    case Application.get_env(:hi_pulse, :secret) do
+      value when is_binary(value) -> if String.trim(value) == "", do: nil, else: value
+      _ -> nil
+    end
+  end
+
+  @reporter_salt "hi_pulse reporter v1"
+
+  @doc """
+  Signs the reporter's identity for the widget's live connection to
+  `hi_pulse_server`, which verifies it with the same secret.
+
+  Accepts a map with `:email` and/or `:id` (atom or string keys). The id
+  is signed as a string. Returns `nil` when no secret is configured or
+  the map carries neither an email nor an id.
+  """
+  @spec reporter_token(map() | nil) :: String.t() | nil
+  def reporter_token(reporter) when is_map(reporter) do
+    email = identity(reporter, :email)
+    id = identity(reporter, :id)
+
+    case secret() do
+      secret when is_binary(secret) and (is_binary(email) or is_binary(id)) ->
+        Phoenix.Token.sign(secret, @reporter_salt, %{"e" => email, "i" => id})
+
+      _ ->
+        nil
+    end
+  end
+
+  def reporter_token(_reporter), do: nil
+
+  defp identity(reporter, key) do
+    value = Map.get(reporter, key) || Map.get(reporter, Atom.to_string(key))
+
+    case value && to_string(value) do
+      nil -> nil
+      "" -> nil
+      string -> string
+    end
   end
 end

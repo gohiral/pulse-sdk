@@ -27,7 +27,7 @@ should read [README.md](README.md) instead.
 
 ```bash
 # 1. Add the dep — append to the deps/0 list in mix.exs:
-#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.1.7"}
+#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.2.0"}
 
 # 2. Pull
 mix deps.get
@@ -36,22 +36,28 @@ mix deps.get
 mix hi_pulse.install \
   --token=hif_live_<...> \
   --server-url=https://pulse.hiral.io \
-  --capture-errors=prod-only
+  --capture-errors=prod-only \
+  --secret=hif_secret_<...>    # optional: reporter updates
 ```
 
 The task patches **6 files**, idempotent (re-runs print `already patched`):
 
 | File | What's added |
 |------|--------------|
-| `config/runtime.exs` | `config :hi_pulse` block. Detects Dotenvy and emits `Dotenvy.env!` for dev/test + `System.fetch_env!` for prod. Vanilla apps get plain `System.fetch_env!`. |
+| `config/runtime.exs` | `config :hi_pulse` block. Detects Dotenvy and emits `Dotenvy.env!` for dev/test + `System.fetch_env!` for prod. Vanilla apps get plain `System.fetch_env!`. Reads the optional `HI_PULSE_SECRET` too. |
 | `lib/<app>_web/components/layouts/root.html.heex` | `<HiPulse.Components.pulse_widget />` before `</body>`, gated on `:current_user` |
 | `lib/<app>_web/endpoint.ex` | `Plug.Static at: "/assets/vendor/hi_pulse"` inserted **above** the catch-all `Plug.Static at: "/"` — order is mandatory |
 | `assets/js/app.js` | `import {PulseWidgetHook}` + register on LiveSocket's `hooks:` (creates the key if missing) |
 | `assets/css/app.css` | `@import "../../deps/hi_pulse/priv/static/css/pulse-widget.css";` inserted in the **leading-imports block** (CSS spec requires `@import` to precede non-import rules) |
 | `config/config.exs` | `--alias:hi_pulse=…` appended to esbuild args |
 
-Also appends `HI_PULSE_TOKEN` and `HI_PULSE_SERVER_URL` to `.env` if it
-exists; otherwise prints `export …` lines.
+Also appends `HI_PULSE_TOKEN`, `HI_PULSE_SERVER_URL` and (when given)
+`HI_PULSE_SECRET` to `.env` if it exists; otherwise prints `export …`
+lines. Re-running with `--secret` adds the secret to an existing install.
+
+`HI_PULSE_SECRET` is the project's reporter secret (shown once when
+rotated in pulse). Like the token, ask the user for it; **don't make it
+up**. Without it the widget works but reporter updates stay off.
 
 ## Verify
 
@@ -59,8 +65,9 @@ exists; otherwise prints `export …` lines.
 mix hi_pulse.doctor
 ```
 
-Static check, 8 wires. Each FAIL prints a fix hint. Exit non-zero on
-failure (CI-composable). Run this BEFORE handing back to the user —
+Static check, 10 wires. Each FAIL prints a fix hint. Exit non-zero on
+failure (CI-composable). The reporter-secret and esbuild `NODE_PATH`
+checks only WARN. Run this BEFORE handing back to the user —
 don't claim "installed" if doctor isn't green.
 
 ## The three-step ritual after install
@@ -89,6 +96,8 @@ covers it but humans skim.
 | Widget submission 401s | `HI_PULSE_TOKEN` empty / wrong / for another project | Rotate in the admin UI; restart the consumer's BEAM. |
 | Browser console: CORS blocked on `/projects/me/config` | Server build pre-dates `0d4db61` | Redeploy `hi_pulse_server`. Widget still works (falls back to default types/priorities); only dropdowns are stale. |
 | Replay never reaches bucket | rrweb script tag 404s in the consumer | `mix hi_pulse.doctor` flags this — fix endpoint mount order, restart server. |
+| esbuild: `Could not resolve "phoenix"` | esbuild profile has no `NODE_PATH` with `deps/` | Add `env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}` to the esbuild profile (see README "Reporter updates"). |
+| No dot, no "Your reports" despite replies in pulse | `HI_PULSE_SECRET` unset, not read in `runtime.exs`, or the `reporter` map has neither email nor id | `mix hi_pulse.doctor`; check the widget div carries `data-reporter-token`. |
 | Widget styles broken (with CSS loaded) | Consumer app's design system overrides `--color-ink` / `--color-canvas` etc. | Either accept the host's tokens or override the widget's CSS variables explicitly at `:root`. |
 
 ## Uninstall
@@ -102,7 +111,7 @@ git revert <each>
 mix deps.unlock --unused
 ```
 
-Plus remove `HI_PULSE_TOKEN` / `HI_PULSE_SERVER_URL` from `.env`.
+Plus remove `HI_PULSE_TOKEN` / `HI_PULSE_SERVER_URL` / `HI_PULSE_SECRET` from `.env`.
 
 ## Don't do
 
@@ -112,6 +121,9 @@ Plus remove `HI_PULSE_TOKEN` / `HI_PULSE_SERVER_URL` from `.env`.
 - **Don't** hardcode the token in `runtime.exs`. The installer's
   config block reads from `HI_PULSE_TOKEN`; commit the config but
   not the value.
+- **Don't** put `HI_PULSE_SECRET` anywhere the browser sees it. Unlike
+  the token, it's a server-side secret: it signs reporter identities and
+  authorises release reports.
 - **Don't** re-implement the widget UI inside the consumer app. The
   SDK ships the JS, CSS, and component. If you need different copy,
   override `T.fab` etc. (see README "Customize copy").

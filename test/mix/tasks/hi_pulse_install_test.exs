@@ -23,6 +23,8 @@ defmodule Mix.Tasks.HiPulse.InstallTest do
       assert patched =~ ~s|System.get_env("HI_PULSE_SERVER_URL")|
       refute patched =~ "Dotenvy.env!"
       refute patched =~ "if config_env() in [:dev, :test]"
+      # The reporter secret is optional, so it never raises at boot.
+      assert patched =~ ~s|secret: System.get_env("HI_PULSE_SECRET")|
     end
 
     test "is idempotent — re-running on already-patched content is a no-op" do
@@ -70,6 +72,8 @@ defmodule Mix.Tasks.HiPulse.InstallTest do
 
       assert patched =~
                ~s|Dotenvy.env!("HI_PULSE_PROJECT_SLUG", :string, nil)|
+
+      assert patched =~ ~s|Dotenvy.env!("HI_PULSE_SECRET", :string, nil)|
     end
 
     test "also emits a prod-only block using System.fetch_env!", %{original: original} do
@@ -95,6 +99,51 @@ defmodule Mix.Tasks.HiPulse.InstallTest do
       assert {:ok, patched} = Install.patch_runtime_exs(original, "prod-only")
       assert patched =~ "config :hi_pulse, capture_errors: true"
       assert patched =~ "if config_env() == :prod do"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # patch_dotenv/2 — per-var markers keep re-runs idempotent
+  # ---------------------------------------------------------------------------
+
+  describe "patch_dotenv/2" do
+    @env %{
+      token: "hif_live_abc",
+      server_url: "https://pulse.hiral.io",
+      secret: "hif_secret_xyz"
+    }
+
+    test "appends token, server URL and secret to a fresh .env" do
+      {patched, keys} = Install.patch_dotenv("DATABASE_URL=\"ecto://localhost/app\"\n", @env)
+
+      assert keys == ["HI_PULSE_TOKEN", "HI_PULSE_SERVER_URL", "HI_PULSE_SECRET"]
+      assert patched =~ ~s|HI_PULSE_TOKEN="hif_live_abc"|
+      assert patched =~ ~s|HI_PULSE_SERVER_URL="https://pulse.hiral.io"|
+      assert patched =~ ~s|HI_PULSE_SECRET="hif_secret_xyz"|
+      assert String.starts_with?(patched, ~s|DATABASE_URL="ecto://localhost/app"\n\n|)
+    end
+
+    test "adds only the secret to an existing install" do
+      existing = ~s|HI_PULSE_TOKEN="hif_live_old"\n|
+      {patched, keys} = Install.patch_dotenv(existing, @env)
+
+      assert keys == ["HI_PULSE_SECRET"]
+      assert patched =~ ~s|HI_PULSE_TOKEN="hif_live_old"|
+      refute patched =~ "hif_live_abc"
+      refute patched =~ "HI_PULSE_SERVER_URL"
+      assert patched =~ ~s|HI_PULSE_SECRET="hif_secret_xyz"|
+    end
+
+    test "is a no-op when every var is already mentioned" do
+      existing = ~s|HI_PULSE_TOKEN="t"\nHI_PULSE_SECRET="s"\n|
+      assert {^existing, []} = Install.patch_dotenv(existing, @env)
+    end
+
+    test "skips the secret when none was given" do
+      {patched, keys} = Install.patch_dotenv("", %{@env | secret: ""})
+
+      assert keys == ["HI_PULSE_TOKEN", "HI_PULSE_SERVER_URL"]
+      refute patched =~ "HI_PULSE_SECRET"
     end
   end
 

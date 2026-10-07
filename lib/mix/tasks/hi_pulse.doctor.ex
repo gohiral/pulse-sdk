@@ -39,12 +39,17 @@ defmodule Mix.Tasks.HiPulse.Doctor do
     8. **Root layout** — the root layout template renders
        `<HiPulse.Components.pulse_widget>` (gated on `:current_user`
        by default).
+    9. **Reporter secret** — `HI_PULSE_SECRET` is set. WARN only:
+       without it the widget works but reporter updates are off.
+    10. **Esbuild NODE_PATH** — the esbuild config puts `deps` on
+        `NODE_PATH`, so the widget's `import { Socket } from "phoenix"`
+        resolves. WARN only, since asset pipelines vary.
 
   With `--live`, two more checks run:
 
-    9. **Server reachable** — HEAD on `<HI_PULSE_SERVER_URL>/login`
-       returns a 2xx/3xx. Catches "no DNS / cert / TLS / wrong host".
-    10. **Token round-trips** — GET on `/api/v1/projects/me/config`
+    11. **Server reachable** — HEAD on `<HI_PULSE_SERVER_URL>/login`
+        returns a 2xx/3xx. Catches "no DNS / cert / TLS / wrong host".
+    12. **Token round-trips** — GET on `/api/v1/projects/me/config`
         with the token in `.env` returns 200 + a JSON body. Catches
         "stale token / wrong project / server not redeployed".
 
@@ -73,7 +78,9 @@ defmodule Mix.Tasks.HiPulse.Doctor do
       &check_app_js/1,
       &check_config_exs/1,
       &check_runtime_exs/1,
-      &check_root_layout/1
+      &check_root_layout/1,
+      &check_secret/1,
+      &check_node_path/1
     ]
 
     static_results =
@@ -382,6 +389,64 @@ defmodule Mix.Tasks.HiPulse.Doctor do
           ok("Root layout", "`<HiPulse.Components.pulse_widget>` rendered", path)
         else
           fail("Root layout", "widget component not in root layout — re-run installer", path)
+        end
+    end
+  end
+
+  @doc false
+  def check_secret(_app) do
+    in_dotenv? =
+      case File.read(".env") do
+        {:ok, body} -> body =~ ~r/^\s*(?:export\s+)?HI_PULSE_SECRET=["']?[^"'\s]/m
+        {:error, _} -> false
+      end
+
+    read_by_config? =
+      case File.read("config/runtime.exs") do
+        {:ok, body} -> body =~ "HI_PULSE_SECRET"
+        {:error, _} -> false
+      end
+
+    cond do
+      not (in_dotenv? or System.get_env("HI_PULSE_SECRET", "") != "") ->
+        warn(
+          "Reporter secret",
+          "`HI_PULSE_SECRET` not set — reporter updates disabled. Rotate the project's reporter secret in pulse and add it to .env and your deployment.",
+          ".env"
+        )
+
+      not read_by_config? ->
+        warn(
+          "Reporter secret",
+          ~s|HI_PULSE_SECRET is set but config/runtime.exs doesn't read it — reporter updates disabled. Add `secret: System.get_env("HI_PULSE_SECRET")` to the `config :hi_pulse` block.|,
+          "config/runtime.exs"
+        )
+
+      true ->
+        ok("Reporter secret", "HI_PULSE_SECRET is set and read; reporter updates are on", ".env")
+    end
+  end
+
+  # The widget imports `Socket` from the `phoenix` package for reporter
+  # updates. esbuild resolves that bare import through NODE_PATH, which
+  # stock `phx.new` apps point at `deps/` in the esbuild `env`.
+  @doc false
+  def check_node_path(_app) do
+    path = "config/config.exs"
+
+    case File.read(path) do
+      {:error, _} ->
+        warn("Esbuild NODE_PATH", "#{path} missing — can't check NODE_PATH", path)
+
+      {:ok, body} ->
+        if body =~ ~r/NODE_PATH.{0,200}deps/s do
+          ok("Esbuild NODE_PATH", "esbuild resolves `phoenix` from deps/", path)
+        else
+          warn(
+            "Esbuild NODE_PATH",
+            ~s|no NODE_PATH with deps/ in the esbuild env — the widget's `import { Socket } from "phoenix"` may not resolve. Add `env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}` to the esbuild profile.|,
+            path
+          )
         end
     end
   end

@@ -36,7 +36,9 @@ defmodule HiPulse.Components do
       widget at all. Wire this to your auth gate (e.g. `@current_user
       != nil`).
     * `reporter` (map, default `%{}`) — identity stamped into the
-      submission. Supported keys: `:email`, `:id`, `:metadata`.
+      submission. Supported keys: `:email`, `:id`, `:metadata`. When
+      `HiPulse.secret/0` is set, the email and id are also signed into
+      `data-reporter-token`, which turns on reporter updates.
     * `context` (map, default `%{}`) — arbitrary key/value pairs
       attached to every submission (e.g. `%{tenant_id: "abc"}`).
     * `vendor_path` (string, default `"/assets/vendor/hi_pulse"`)
@@ -84,6 +86,7 @@ defmodule HiPulse.Components do
         data-server-url={HiPulse.server_url()}
         data-token={HiPulse.token!()}
         data-capture-errors={to_string(HiPulse.capture_errors?())}
+        data-reporter-token={@data.reporter_token}
       >
       </div>
     <% end %>
@@ -93,7 +96,41 @@ defmodule HiPulse.Components do
   defp build_data(assigns) do
     %{
       reporter: Jason.encode!(assigns[:reporter] || %{}),
-      context: Jason.encode!(assigns[:context] || %{})
+      context: Jason.encode!(assigns[:context] || %{}),
+      reporter_token: HiPulse.reporter_token(assigns[:reporter])
     }
+  end
+
+  @doc """
+  Renders the slot the widget fills with "Includes your fix: …" when a
+  release ships a fix the current user reported.
+
+  Place it inside your app's "new version available" banner. Render it
+  whenever the widget is mounted, even while the banner is hidden: the
+  widget looks for the slot the moment the release arrives and shows its
+  own peek when there is none. The element stays `hidden` until filled
+  and is ignored by LiveView patches, so a banner re-render keeps the
+  line.
+
+  ## Attributes
+
+    * `id` (string, default `"hi-pulse-release-note"`) — required by
+      `phx-update="ignore"`; override when rendering more than one.
+    * `class` — classes for the line, e.g. your banner's secondary text.
+
+  ## Examples
+
+      <div id="new-version-banner" hidden>
+        <p>The app was updated.</p>
+        <HiPulse.Components.release_note class="text-xs text-secondary" />
+      </div>
+  """
+  attr(:id, :string, default: "hi-pulse-release-note")
+  attr(:class, :any, default: nil)
+
+  def release_note(assigns) do
+    ~H"""
+    <div id={@id} class={@class} phx-update="ignore" data-hi-pulse-release-note hidden></div>
+    """
   end
 end
