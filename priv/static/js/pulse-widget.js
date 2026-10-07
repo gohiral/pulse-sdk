@@ -581,26 +581,23 @@ export const PulseWidgetHook = {
     panel.querySelector("input[name=title]").focus({ preventScroll: true });
   },
 
-  // "Your reports" button in the form header, once the reporter has any:
-  // an inbox icon carrying the FAB's dot (the FAB hides it while the form
-  // is open), the label, and the count of unseen updates.
+  // "Your reports" in the form header, once the reporter has any: an icon
+  // button with the FAB's dot (the FAB hides it while the form is open).
+  // The label is its accessible name and a tooltip, with the count of
+  // unseen updates in brackets.
   _syncReportsLink() {
     const link = this.formPanel?.querySelector("[data-action='your-reports']");
     if (!link) return;
     link.hidden = !this.updates?.hasReports();
     const count = this.updates?.unseenCount() || 0;
     const status = this.updates?.dotStatus() || null;
-    link.innerHTML = `<span class="fb-head-icon">${inboxIcon()}<span class="fb-fab-dot fb-head-dot" aria-hidden="true"></span></span>`;
+    const name = count ? `${T.yourReports} (${count})` : T.yourReports;
+    link.setAttribute("aria-label", name);
+    link.innerHTML = `${inboxIcon()}<span class="fb-fab-dot fb-head-dot" aria-hidden="true"></span><span class="fb-tip" aria-hidden="true"></span>`;
     const dot = link.querySelector(".fb-head-dot");
     dot.hidden = !status;
     dot.dataset.status = status || "";
-    link.append(T.yourReports);
-    if (count) {
-      const badge = document.createElement("span");
-      badge.className = "fb-count";
-      badge.textContent = String(count);
-      link.append(" ", badge);
-    }
+    link.querySelector(".fb-tip").textContent = name;
   },
 
   _applyFormPanelCorner() {
@@ -1214,8 +1211,8 @@ function chip(key, value, label, active = false, prioVariant = null) {
 }
 
 function inboxIcon() {
-  // Heroicons-style inbox tray, 14×14 like the toolbar icons.
-  return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 9.25 3.9 3.8a1 1 0 0 1 .96-.7h6.28a1 1 0 0 1 .96.7l1.65 5.45v2.75a1.25 1.25 0 0 1-1.25 1.25h-9A1.25 1.25 0 0 1 2.25 12V9.25Z"/><path d="M2.25 9.25h3l.75 1.5h4l.75-1.5h3"/></svg>`;
+  // Heroicons-style inbox tray, 16×16 as the header's only control.
+  return `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 9.25 3.9 3.8a1 1 0 0 1 .96-.7h6.28a1 1 0 0 1 .96.7l1.65 5.45v2.75a1.25 1.25 0 0 1-1.25 1.25h-9A1.25 1.25 0 0 1 2.25 12V9.25Z"/><path d="M2.25 9.25h3l.75 1.5h4l.75-1.5h3"/></svg>`;
 }
 
 function rectIcon() {

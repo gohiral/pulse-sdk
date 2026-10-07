@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.1"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.1"}
   ]
 end
 ```

@@ -27,7 +27,7 @@ should read [README.md](README.md) instead.
 
 ```bash
 # 1. Add the dep — append to the deps/0 list in mix.exs:
-#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.0"}
+#     {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.3.1"}
 
 # 2. Pull
 mix deps.get

@@ -1042,62 +1042,66 @@
   }
 }
 
-/* "Your reports" button in the feedback form header: inbox icon (with the
-   FAB's dot when there are unseen updates), label, count. */
+/* "Your reports" in the feedback form header: a ghost icon button with the
+   FAB's dot when there are unseen updates; the label shows as a tooltip on
+   hover and keyboard focus. */
 .fb-head-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  position: relative;
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
-  padding: 3px 8px 3px 7px;
-  border: 1px solid var(--color-edge-strong);
+  width: 28px;
+  height: 28px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: 0;
   border-radius: 4px;
-  background: var(--color-canvas);
+  background: none;
   font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-  color: var(--color-ink);
+  color: var(--color-secondary);
   cursor: pointer;
-  transition: background 100ms ease, border-color 100ms ease;
+  transition: background 100ms ease, color 100ms ease;
 }
 
 .fb-head-link:hover {
   background: var(--color-surface);
-}
-
-.fb-head-icon {
-  position: relative;
-  display: inline-grid;
-  place-items: center;
-  color: var(--color-secondary);
-}
-
-.fb-head-link:hover .fb-head-icon {
   color: var(--color-ink);
 }
 
-/* Same dot as the FAB, sized for a 14px icon. */
+/* Same dot as the FAB, on the icon's top-right corner. */
 .fb-fab-dot.fb-head-dot {
-  top: -3px;
-  right: -4px;
-  width: 8px;
-  height: 8px;
+  top: 4px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+}
+
+.fb-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.fb-head-link:hover .fb-tip,
+.fb-head-link:focus-visible .fb-tip {
+  opacity: 1;
 }
 
 .fb-head-link[hidden] {
   display: none;
 }
 
-.fb-count {
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 14px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--color-ink);
-  color: var(--color-canvas);
-}
 
 .fb-btn-sm {
   padding: 3px 8px;
