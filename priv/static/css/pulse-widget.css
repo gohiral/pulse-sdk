@@ -4,45 +4,51 @@
    existing status palette; priority chips mirror Linear (only Urgent is red). */
 
 /* Token defaults so the widget renders correctly in any consumer app, even
-   one without the funnel-builder design system. Wrapped in `:where()` so
-   they have zero specificity — any matching var the consumer defines wins.
-   Light values are the reference; the `[data-theme="dark"]` block flips a
-   handful for dark mode (matching how Phoenix's stock theme toggle stamps
-   the attribute on `<html>`). */
-:where(:root) {
-  --color-canvas: white;
-  --color-surface: oklch(98% 0 0);
-  --color-edge: oklch(94% 0 0);
-  --color-edge-soft: oklch(92% 0 0);
-  --color-edge-strong: oklch(75% 0 0);
-  --color-ink: black;
-  --color-secondary: oklch(55% 0 0);
-  --color-tertiary: oklch(65% 0 0);
-  --color-error: oklch(62% 0.18 15);
-  --color-warning: oklch(88% 0.14 92);
-  --color-active: oklch(65% 0.15 250);
-  --color-success: oklch(65% 0.18 145);
-  --color-pending: oklch(70% 0 0);
-  --color-muted: oklch(75% 0 0);
-  --color-raised: oklch(96% 0 0);
-  --color-pressed: oklch(95% 0 0);
-  --color-faint: oklch(85% 0 0);
-}
+   one without the funnel-builder design system. Any matching var the consumer
+   defines wins: the defaults sit in the cascade layer `theme`, the layer
+   Tailwind v4 puts an app's own tokens in, and inside it `:where()` gives
+   them zero specificity, so the app's `:root` tokens win. Outside any layer
+   they beat a Tailwind app's layered tokens whatever their specificity, which
+   pinned the host's light colours to these values. An app that defines its
+   tokens without layers wins anyway. Light values are the reference; the
+   `[data-theme="dark"]` block flips a handful for dark mode (matching how
+   Phoenix's stock theme toggle stamps the attribute on `<html>`). */
+@layer theme {
+  :where(:root) {
+    --color-canvas: white;
+    --color-surface: oklch(98% 0 0);
+    --color-edge: oklch(94% 0 0);
+    --color-edge-soft: oklch(92% 0 0);
+    --color-edge-strong: oklch(75% 0 0);
+    --color-ink: black;
+    --color-secondary: oklch(55% 0 0);
+    --color-tertiary: oklch(65% 0 0);
+    --color-error: oklch(62% 0.18 15);
+    --color-warning: oklch(88% 0.14 92);
+    --color-active: oklch(65% 0.15 250);
+    --color-success: oklch(65% 0.18 145);
+    --color-pending: oklch(70% 0 0);
+    --color-muted: oklch(75% 0 0);
+    --color-raised: oklch(96% 0 0);
+    --color-pressed: oklch(95% 0 0);
+    --color-faint: oklch(85% 0 0);
+  }
 
-:where([data-theme="dark"]) {
-  --color-canvas: oklch(14% 0.008 60);
-  --color-surface: oklch(17% 0.006 60);
-  --color-edge: oklch(24% 0.006 60);
-  --color-edge-soft: oklch(21% 0.005 60);
-  --color-edge-strong: oklch(38% 0.004 60);
-  --color-ink: oklch(92% 0.01 60);
-  --color-secondary: oklch(55% 0.005 60);
-  --color-tertiary: oklch(48% 0.004 60);
-  --color-pending: oklch(42% 0.004 60);
-  --color-muted: oklch(38% 0.004 60);
-  --color-raised: oklch(19% 0.005 60);
-  --color-pressed: oklch(21% 0.004 60);
-  --color-faint: oklch(28% 0.004 60);
+  :where([data-theme="dark"]) {
+    --color-canvas: oklch(14% 0.008 60);
+    --color-surface: oklch(17% 0.006 60);
+    --color-edge: oklch(24% 0.006 60);
+    --color-edge-soft: oklch(21% 0.005 60);
+    --color-edge-strong: oklch(38% 0.004 60);
+    --color-ink: oklch(92% 0.01 60);
+    --color-secondary: oklch(55% 0.005 60);
+    --color-tertiary: oklch(48% 0.004 60);
+    --color-pending: oklch(42% 0.004 60);
+    --color-muted: oklch(38% 0.004 60);
+    --color-raised: oklch(19% 0.005 60);
+    --color-pressed: oklch(21% 0.004 60);
+    --color-faint: oklch(28% 0.004 60);
+  }
 }
 
 .fb-fab {
