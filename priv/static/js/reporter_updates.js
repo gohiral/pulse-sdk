@@ -9,6 +9,11 @@
 // "reports" and keeps the reporter's reports in memory; the server pushes
 // a "report" event whenever one changes. Phoenix reconnects on its own.
 //
+// In a feedback team (set up in pulse), the join also brings the
+// teammates' reports and "team_report" pushes keep them current. The list
+// gets "Mine / Team / All" chips; a teammate's report is read-only and can
+// be followed ("Affects me too"), which brings its fix to this person too.
+//
 // `import { Socket } from "phoenix"` resolves through the host's esbuild
 // NODE_PATH (stock Phoenix apps include deps/). Decisions about what to show
 // live in reporter_view.js so they can be tested without a browser.
@@ -17,17 +22,21 @@ import { Socket } from "phoenix";
 import {
   EMOJI,
   QUICK_REACTIONS,
+  REPORT_FILTERS,
   canReact,
   clip,
+  affectedCount,
   dotStatus,
   escapeHTML,
   filterEmoji,
+  filterReports,
   firstEmoji,
   fmt,
   formatDate,
   freshTeamReactions,
   teamReactions,
   hasUpdate,
+  isTeamReport,
   isTypingTarget,
   joinPeek,
   labelFor,
@@ -50,6 +59,7 @@ import {
   unshownTeamReactions,
   upsertReport,
   verdictNodeKey,
+  watchedReports,
   withoutStep,
   withReactions,
   withStep,
@@ -68,6 +78,8 @@ const REACTION_LEAVE_MS = 260;
 const REACTION_GAP_MS = 600;
 // Team reactions the FAB already showed, so a page load doesn't replay them.
 const SHOWN_REACTIONS_KEY = "hi-pulse-shown-reactions";
+// The list's filter chip last picked: "mine", "team" or "all".
+const FILTER_KEY = "hi-pulse-report-filter";
 
 export class ReporterUpdates {
   // `host` is the PulseWidgetHook seam: corner(), formOpen(), closeForm(),
@@ -77,6 +89,10 @@ export class ReporterUpdates {
     this.fab = fab;
     this.host = host;
     this.reports = [];
+    // Teammates' reports (`relation` "followed" or "team"); empty outside a team.
+    this.teamReports = [];
+    this.inTeam = false;
+    this.filter = loadFilter();
     this.joined = false;
     this.connected = false;
     this.everConnected = false;
@@ -151,18 +167,23 @@ export class ReporterUpdates {
   }
 
   hasReports() {
-    return this.reports.length > 0;
+    return this.reports.length > 0 || this.teamReports.length > 0;
   }
 
   unseenCount() {
-    return unseenCount(this.reports);
+    return unseenCount(this._watched());
   }
 
   // The FAB dot's colour key, or null without unseen updates. The form's
   // "Your reports" button repeats it, since the FAB hides its dot while
   // a panel is open.
   dotStatus() {
-    return dotStatus(this.reports);
+    return dotStatus(this._watched());
+  }
+
+  // Own reports and followed ones: the ones that notify.
+  _watched() {
+    return watchedReports(this.reports, this.teamReports);
   }
 
   get reactionShowing() {
@@ -193,12 +214,15 @@ export class ReporterUpdates {
     socket.onClose(() => this._setConnected(false));
 
     // A deep-linked report is asked for explicitly: it may be older than
-    // the newest reports the join lists.
+    // the newest reports the join lists. `team` asks for the teammates'
+    // reports; servers before it ignore the flag.
     const channel = socket.channel("reports", () => {
       const include = readDeepLink(window.location);
-      return include ? { include } : {};
+      return include ? { team: true, include } : { team: true };
     });
     channel.on("report", (payload) => this._onPush(payload));
+    channel.on("team_report", (payload) => this._onTeamPush(payload));
+    channel.on("team", (payload) => this._onTeam(payload));
     channel.join().receive("ok", (reply) => this._onJoin(reply));
     socket.connect();
     this.socket = socket;
@@ -213,11 +237,13 @@ export class ReporterUpdates {
 
   // The join reply carries every report; on a rejoin after a dropped
   // connection, whatever changed meanwhile is treated like a live push.
-  _onJoin({ reports } = {}) {
-    const previous = this.reports;
+  _onJoin({ reports, team_reports: teamReports, in_team: inTeam } = {}) {
+    const previous = this._watched();
     this.reports = sortReports(reports);
+    this.teamReports = sortReports(teamReports);
+    this.inTeam = Boolean(inTeam);
     if (this.joined) {
-      changedReports(previous, this.reports).forEach(({ prev, next }) =>
+      changedReports(previous, this._watched()).forEach(({ prev, next }) =>
         this._notify(prev, next, "update"),
       );
       // A reaction doesn't change a report's signature: catch up on any
@@ -226,7 +252,7 @@ export class ReporterUpdates {
     } else {
       this.joined = true;
       if (!this._openDeepLink()) {
-        const peek = joinPeek(this.reports);
+        const peek = joinPeek(this._watched());
         if (peek) this._setTimer("joinPeek", () => this._queuePeek(peek), JOIN_PEEK_DELAY_MS);
       }
       this._queueReactions(unshownTeamReactions(this.reports, this.shownReactions, Date.now()));
@@ -242,8 +268,27 @@ export class ReporterUpdates {
     this._changed();
   }
 
+  // The project's teams changed: the new teammates' reports replace the
+  // old ones (a report no longer visible closes back to the list).
+  _onTeam({ team_reports: teamReports, in_team: inTeam } = {}) {
+    this.teamReports = sortReports(teamReports);
+    this.inTeam = Boolean(inTeam);
+    this._changed();
+  }
+
+  // A teammate's report changed; it notifies only when followed (the
+  // server marks nothing unseen otherwise).
+  _onTeamPush({ report, cause } = {}) {
+    if (!report?.id) return;
+    const prev = this.teamReports.find((r) => r.id === report.id);
+    this.teamReports = upsertReport(this.teamReports, report);
+    this._notify(prev, report, cause);
+    this._changed();
+  }
+
   _notify(prev, report, cause) {
-    this._queueReactions(freshTeamReactions(prev, report));
+    // The team's emoji on a teammate's messages are theirs to see.
+    if (!isTeamReport(report)) this._queueReactions(freshTeamReactions(prev, report));
     if (this._viewing(report.id)) {
       // Open in front of the reporter: "New" moves to this update (the
       // earlier ones were seen here) and it is marked seen.
@@ -272,7 +317,8 @@ export class ReporterUpdates {
 
   _accept(report) {
     if (!report?.id) return;
-    this.reports = upsertReport(this.reports, report);
+    if (isTeamReport(report)) this.teamReports = upsertReport(this.teamReports, report);
+    else this.reports = upsertReport(this.reports, report);
     this._changed();
   }
 
@@ -309,7 +355,7 @@ export class ReporterUpdates {
   _changed() {
     this._renderDot();
     if (this.panel) this._renderPanel();
-    if (this.shownPeek && !resolvePeek(this.shownPeek, this.reports)) this._hidePeek();
+    if (this.shownPeek && !resolvePeek(this.shownPeek, this._watched())) this._hidePeek();
     this.host.onChange();
   }
 
@@ -324,10 +370,10 @@ export class ReporterUpdates {
 
   _renderDot() {
     const { T } = this;
-    const status = dotStatus(this.reports);
+    const status = dotStatus(this._watched());
     this.dot.hidden = !status;
     this.dot.dataset.status = status || "";
-    const count = unseenCount(this.reports);
+    const count = unseenCount(this._watched());
     const label = count === 0 ? T.fab : count === 1 ? T.fabUpdate : fmt(T.fabUpdates, { count });
     this.fab.setAttribute("aria-label", label);
   }
@@ -388,7 +434,7 @@ export class ReporterUpdates {
     if (!this.pendingPeek || this.panel || this.host.formOpen()) return;
     if (document.visibilityState !== "visible" || !document.hasFocus()) return;
     if (this.timers.typing || this._typingOutside()) return;
-    const peek = resolvePeek(this.pendingPeek, this.reports);
+    const peek = resolvePeek(this.pendingPeek, this._watched());
     this.pendingPeek = null;
     if (peek) this._showPeek(peek);
   }
@@ -410,7 +456,7 @@ export class ReporterUpdates {
     let dot;
     let body;
     if (peek.kind === "many") {
-      dot = dotStatus(this.reports) || "neutral";
+      dot = dotStatus(this._watched()) || "neutral";
       body = `
         <span class="fb-peek-title">${escapeHTML(fmt(T.peekMany, { count: peek.count }))}</span>
         <span class="fb-peek-sub">${escapeHTML(T.peekManySub)}</span>`;
@@ -429,7 +475,7 @@ export class ReporterUpdates {
       dot = "fixed";
       body = `
         <span class="fb-peek-title">${escapeHTML(fmt(T.peekFixed, { title: peek.report.title }))}</span>
-        <span class="fb-peek-sub">${escapeHTML(T.peekFixedSub)}</span>`;
+        <span class="fb-peek-sub">${escapeHTML(isTeamReport(peek.report) ? T.peekFixedFollowedSub : T.peekFixedSub)}</span>`;
     }
     this.peekEl.innerHTML = `
       <button type="button" class="fb-peek-card">
@@ -595,7 +641,7 @@ export class ReporterUpdates {
   // FAB with unseen updates: straight into the timeline when only one
   // report changed, otherwise the list.
   openFromFab() {
-    const updated = this.reports.filter(hasUpdate);
+    const updated = this._watched().filter(hasUpdate);
     if (updated.length === 1) {
       this.openReport(updated[0].id, { focusReply: updated[0].status === "needs_info" });
     } else {
@@ -655,7 +701,7 @@ export class ReporterUpdates {
   }
 
   _report(id) {
-    return this.reports.find((r) => r.id === id);
+    return this.reports.find((r) => r.id === id) || this.teamReports.find((r) => r.id === id);
   }
 
   _viewing(id) {
@@ -687,12 +733,14 @@ export class ReporterUpdates {
     panel.innerHTML = `
       <div class="fb-rp">
         <header class="fb-rp-head"></header>
+        <div class="fb-rp-chips" role="group" aria-label="${escapeHTML(T.filterLabel)}" hidden></div>
         <div class="fb-rp-body"></div>
         <form class="fb-rp-reply" novalidate hidden>
           <textarea class="fb-textarea" name="body" rows="1" maxlength="5000"></textarea>
           <button type="submit" class="fb-btn-primary">${escapeHTML(T.send)}</button>
         </form>
         <p class="fb-rp-foot" hidden>${escapeHTML(T.answerHint)}</p>
+        <div class="fb-rp-follow" hidden></div>
       </div>`;
     panel.addEventListener("click", (e) => this._onPanelClick(e));
     const form = panel.querySelector(".fb-rp-reply");
@@ -784,6 +832,12 @@ export class ReporterUpdates {
         return this._focusInitial(false);
       case "new-report":
         return this.host.openForm();
+      case "filter":
+        return this._setFilter(target.dataset.filter);
+      case "follow":
+        return this._follow(true);
+      case "unfollow":
+        return this._follow(false);
       case "works":
         return this._sendVerdict(true);
       case "broken":
@@ -812,7 +866,7 @@ export class ReporterUpdates {
       this.view.name === "list"
         ? ["[data-report-id]", "[data-action='new-report']"]
         : focusReply
-          ? [".fb-answer-input", ".fb-rp-reply:not([hidden]) textarea"]
+          ? [".fb-answer-input", ".fb-rp-reply:not([hidden]) textarea", "[data-action='back']"]
           : ["[data-action='back']"];
     const target = selectors.map((sel) => this.panel.querySelector(sel)).find(Boolean);
     target?.focus({ preventScroll: true });
@@ -838,6 +892,7 @@ export class ReporterUpdates {
       this.view = { name: "list" };
       this._renderList();
     }
+    this._renderChips();
 
     if (detail != null) {
       const field = this.panel.querySelector(".fb-verdict-detail");
@@ -879,15 +934,50 @@ export class ReporterUpdates {
       <button type="button" class="fb-icon-btn" data-action="close" aria-label="${escapeHTML(T.close)}">${closeIcon()}</button>`;
   }
 
+  // The list's title: "Feedback" with team chips, else "Your reports".
+  _listTitle() {
+    return this.inTeam ? this.T.reports : this.T.yourReports;
+  }
+
+  _renderChips() {
+    const { T } = this;
+    const chips = this.panel.querySelector(".fb-rp-chips");
+    const show = this.inTeam && this.view.name === "list";
+    chips.hidden = !show;
+    if (!show) return chips.replaceChildren();
+    const counts = {
+      mine: filterReports("mine", this.reports, this.teamReports).length,
+      team: this.teamReports.length,
+    };
+    const labels = { mine: T.filterMine, team: T.filterTeam, all: T.filterAll };
+    chips.innerHTML = REPORT_FILTERS
+      .map((filter) => {
+        const label = filter in counts ? `${labels[filter]} · ${counts[filter]}` : labels[filter];
+        return `<button type="button" class="fb-chip" data-action="filter" data-filter="${filter}" aria-pressed="${this.filter === filter}">${escapeHTML(label)}</button>`;
+      })
+      .join("");
+  }
+
+  _setFilter(filter) {
+    if (!REPORT_FILTERS.includes(filter) || filter === this.filter) return;
+    this.filter = filter;
+    saveFilter(filter);
+    this._renderPanel({ fresh: true });
+    this.panel.querySelector(`[data-filter="${filter}"]`)?.focus({ preventScroll: true });
+  }
+
   _renderList() {
     const { T } = this;
     const now = Date.now();
-    this._renderHead(`<h3 class="fb-rp-title">${escapeHTML(T.yourReports)}</h3>`);
+    this._renderHead(`<h3 class="fb-rp-title">${escapeHTML(this._listTitle())}</h3>`);
     this.panel.querySelector(".fb-rp-reply").hidden = true;
     this.panel.querySelector(".fb-rp-foot").hidden = true;
-    const rows = this.reports.map((report) => {
+    this.panel.querySelector(".fb-rp-follow").hidden = true;
+    const list = this.inTeam ? filterReports(this.filter, this.reports, this.teamReports) : this.reports;
+    const rows = list.map((report) => {
       const unread = hasUpdate(report);
       const message = latestTeamMessage(report);
+      const team = isTeamReport(report);
       return `
         <li>
           <button type="button" class="fb-rp-row${unread ? " unread" : ""}" data-report-id="${escapeHTML(report.id)}">
@@ -898,45 +988,82 @@ export class ReporterUpdates {
                 <span class="fb-rp-time">${escapeHTML(relativeTime(report.status_at || report.reported_at, now, T))}</span>
               </span>
               <span class="fb-rp-row-title">${escapeHTML(report.title)}${unread ? `<span class="fb-sr-only">, ${escapeHTML(T.unread)}</span>` : ""}</span>
-              ${message?.body ? `<span class="fb-rp-row-excerpt">${escapeHTML(message.body)}</span>` : ""}
+              ${team ? this._teamRowMeta(report) : message?.body ? `<span class="fb-rp-row-excerpt">${escapeHTML(message.body)}</span>` : ""}
+              ${team ? "" : this._alsoAffectsHTML(report, "fb-rp-row-meta")}
             </span>
           </button>
         </li>`;
     });
+    const empty = this.inTeam && this.filter === "team" ? T.teamReportsEmpty : T.reportsEmpty;
     this.panel.querySelector(".fb-rp-body").innerHTML = rows.length
       ? `<ul class="fb-rp-list">${rows.join("")}</ul>`
-      : `<p class="fb-rp-empty">${escapeHTML(T.reportsEmpty)}</p>`;
+      : `<p class="fb-rp-empty">${escapeHTML(empty)}</p>`;
+  }
+
+  // On the reporter's own report: the teammates who follow it.
+  _alsoAffectsHTML(report, cls) {
+    const names = report.followers || [];
+    if (names.length === 0) return "";
+    const text = fmt(this.T.alsoAffects, { names: listNames(names, this.T.locale) });
+    return `<span class="${cls}"><span class="fb-rp-who">${escapeHTML(text)}</span></span>`;
+  }
+
+  // Under a teammate's report: who sent it, how many it affects, and
+  // whether this person follows it.
+  _teamRowMeta(report) {
+    const { T } = this;
+    const count = affectedCount(report);
+    const who = `<b>${escapeHTML(report.reporter_name || "")}</b>${count > 1 ? ` · ${escapeHTML(fmt(T.affected, { count }))}` : ""}`;
+    const tag = report.relation === "followed" ? `<span class="fb-tag">${escapeHTML(T.following)}</span>` : "";
+    return `<span class="fb-rp-row-meta"><span class="fb-rp-who">${who}</span>${tag}</span>`;
   }
 
   _renderReport(report, fresh) {
     const { T } = this;
     const now = Date.now();
+    // A teammate's report: read-only, with the follow bar instead of the
+    // reply field.
+    const team = isTeamReport(report);
     this._renderHead(`
       <button type="button" class="fb-icon-btn" data-action="back" aria-label="${escapeHTML(T.back)}">${backIcon()}</button>
-      <span class="fb-rp-crumb">${escapeHTML(T.yourReports)}</span>`);
+      <span class="fb-rp-crumb">${escapeHTML(team ? T.filterTeam : this._listTitle())}</span>`);
 
+    const date = formatDate(report.reported_at, now, T.locale);
     const meta = [
       escapeHTML(labelFor(T.type, report.type)),
-      escapeHTML(fmt(T.reportedOn, { date: formatDate(report.reported_at, now, T.locale) })),
+      escapeHTML(
+        team
+          ? fmt(T.reportedByOn, { name: report.reporter_name || "", date })
+          : fmt(T.reportedOn, { date }),
+      ),
       report.linear_identifier ? `<span class="fb-mono">${escapeHTML(report.linear_identifier)}</span>` : "",
     ].filter(Boolean);
 
     const nodes = timeline(report);
-    const verdictKey = verdictNodeKey(report, nodes);
+    if (team) nodes.forEach((node) => (node.open = false));
+    const verdictKey = team ? null : verdictNodeKey(report, nodes);
     this.panel.querySelector(".fb-rp-body").innerHTML = `
       <div class="fb-rp-report-head">
         <h3 class="fb-rp-report-title">${escapeHTML(report.title)}</h3>
         <p class="fb-rp-meta">${meta.join(" · ")}</p>
+        ${team ? "" : this._alsoAffectsHTML(report, "fb-rp-meta")}
       </div>
       <ol class="fb-tl">
         ${nodes.map((node) => this._stepHTML(node, report, node.key === verdictKey, now)).join("")}
       </ol>`;
     this.pulseNow = false;
 
+    const form = this.panel.querySelector(".fb-rp-reply");
+    this._renderFollow(report);
+    if (team) {
+      form.hidden = true;
+      this.panel.querySelector(".fb-rp-foot").hidden = true;
+      return;
+    }
+
     // While a question waits, it is answered in its own field; the bottom
     // field (and its draft) comes back once it is answered.
     const open = openQuestion(nodes);
-    const form = this.panel.querySelector(".fb-rp-reply");
     form.hidden = Boolean(open);
     this.panel.querySelector(".fb-rp-foot").hidden = !open;
     const placeholder = report.status === "needs_info" ? T.answerPlaceholder : T.replyPlaceholder;
@@ -945,18 +1072,54 @@ export class ReporterUpdates {
     if (fresh) form.body.value = this.drafts.get(report.id) || "";
   }
 
+  // The bar under a teammate's report: "Affects me too", or "Following"
+  // with a way back. Hidden on the reporter's own reports.
+  _renderFollow(report) {
+    const { T } = this;
+    const bar = this.panel.querySelector(".fb-rp-follow");
+    bar.hidden = !isTeamReport(report);
+    if (bar.hidden) return bar.replaceChildren();
+    const followed = report.relation === "followed";
+    const busy = this.following === report.id ? " disabled" : "";
+    bar.innerHTML = followed
+      ? `<p class="fb-rp-follow-text"><strong>${escapeHTML(T.following)}</strong>${escapeHTML(T.followingSub)} <button type="button" class="fb-link" data-action="unfollow"${busy}>${escapeHTML(T.unfollow)}</button></p>`
+      : `<p class="fb-rp-follow-text"><strong>${escapeHTML(T.followAsk)}</strong>${escapeHTML(T.followAskSub)}</p>
+         <button type="button" class="fb-btn-primary fb-btn-sm" data-action="follow"${busy}>${escapeHTML(T.follow)}</button>`;
+  }
+
+  _follow(follow) {
+    const report = this.view?.name === "report" ? this._report(this.view.id) : null;
+    if (!report || !isTeamReport(report) || this.following) return;
+    this.following = report.id;
+    this._renderPanel();
+    this._push(follow ? "follow" : "unfollow", { id: report.id })
+      .then((updated) => this._accept(updated))
+      .catch(() => this.host.toast(this.T.followFailed))
+      .finally(() => {
+        this.following = null;
+        if (this.panel) this._renderPanel();
+        this.panel?.querySelector("[data-action='follow'], [data-action='unfollow']")?.focus({ preventScroll: true });
+      });
+  }
+
   _stepHTML(node, report, withVerdict, now) {
     const { T } = this;
     const isNew = node.stepIds.some((id) => this.newStepIds.has(id));
     // The fix still ahead reads as the promise alone: a gray "Fixed" title
-    // looked as if it were done.
+    // looked as if it were done. Nobody promised it to a teammate who
+    // doesn't follow the report.
     const promise = node.state === "todo" && node.status === "fixed";
     const label = promise
-      ? T.stepTodoFixed
+      ? report.relation === "team"
+        ? labelFor(T.status, node.status)
+        : T.stepTodoFixed
       : node.question
-        ? T.stepQuestion
+        ? isTeamReport(report)
+          ? fmt(T.stepQuestionFor, { name: report.reporter_name || "" })
+          : T.stepQuestion
         : labelFor(T.status, node.status);
-    const hint = promise ? "" : this._hint(node);
+    // The hints speak to the reporter ("Your report reached the team").
+    const hint = promise || isTeamReport(report) ? "" : this._hint(node);
     const pulse = this.pulseNow && node.state === "now" && isNew;
     return `
       <li class="fb-step" data-state="${node.state}" data-status="${escapeHTML(node.status)}">
@@ -965,7 +1128,7 @@ export class ReporterUpdates {
           <p class="fb-step-label">${escapeHTML(label)}${isNew ? `<span class="fb-new-tag">${escapeHTML(T.newTag)}</span>` : ""}</p>
           ${hint ? `<p class="fb-step-hint">${escapeHTML(hint)}</p>` : ""}
           ${node.question ? this._threadHTML(node, report, now) : ""}
-          ${node.bubbles.map((step) => this._bubbleHTML(step)).join("")}
+          ${node.bubbles.map((step) => this._bubbleHTML(step, { report })).join("")}
           ${withVerdict ? this._verdictHTML(report) : ""}
         </div>
         ${node.at ? `<time class="fb-step-time" datetime="${escapeHTML(node.at)}">${escapeHTML(relativeTime(node.at, now, T))}</time>` : ""}
@@ -987,17 +1150,21 @@ export class ReporterUpdates {
   _threadHTML(node, report, now) {
     const { T } = this;
     const parts = [];
+    const name = report.reporter_name || "";
+    const team = isTeamReport(report);
     if (node.follows?.answer) {
-      const about = fmt(T.aboutYourAnswer, { answer: clip(node.follows.answer.body, 40) });
+      const answer = clip(node.follows.answer.body, 40);
+      const about = team ? fmt(T.aboutTheirAnswer, { name, answer }) : fmt(T.aboutYourAnswer, { answer });
       parts.push(`<p class="fb-qa-ref">${replyIcon()}<span>${escapeHTML(about)}</span></p>`);
     }
-    for (const question of node.questions) parts.push(this._bubbleHTML(question));
+    for (const question of node.questions) parts.push(this._bubbleHTML(question, { report }));
     for (const answer of node.answers) {
-      const label = fmt(T.yourAnswer, { time: relativeTime(answer.at, now, T) });
+      const time = relativeTime(answer.at, now, T);
+      const label = team ? fmt(T.theirAnswer, { name, time }) : fmt(T.yourAnswer, { time });
       parts.push(`
         <div class="fb-answer">
           <span class="fb-answer-label">${escapeHTML(label)}</span>
-          ${this._bubbleHTML(answer, { by: false })}
+          ${this._bubbleHTML(answer, { by: false, report })}
         </div>`);
     }
     if (node.open) {
@@ -1019,30 +1186,33 @@ export class ReporterUpdates {
 
   // A message: its bubble, then the reactions on its bottom edge. The
   // reporter's own bubbles are filled, the team's outlined. `by: false`
-  // drops the "You · " prefix where a label already says it.
-  _bubbleHTML(step, { by: showBy = true } = {}) {
+  // drops the "You · " prefix where a label already says it; on a
+  // teammate's report the prefix is the reporter's name.
+  _bubbleHTML(step, { by: showBy = true, report = null } = {}) {
     const { T } = this;
+    const team = isTeamReport(report);
     let bubble;
     if (step.author === "reporter") {
       const text =
         step.kind === "verdict" ? (step.body === "works" ? T.worksNow : T.stillBroken) : step.body;
       const detail = step.kind === "verdict" && step.detail ? `<span class="fb-bubble-detail">${escapeHTML(step.detail)}</span>` : "";
-      const prefix = showBy ? `<span class="fb-bubble-by">${escapeHTML(T.you)} · </span>` : "";
+      const author = team ? report.reporter_name || "" : T.you;
+      const prefix = showBy ? `<span class="fb-bubble-by">${escapeHTML(author)} · </span>` : "";
       bubble = `<div class="fb-bubble fb-bubble-mine${step.pending ? " pending" : ""}">${prefix}${escapeHTML(text)}${detail}</div>`;
     } else {
       const by = step.author_name ? ` <span class="fb-bubble-by">${escapeHTML(step.author_name)}</span>` : "";
       bubble = `<div class="fb-bubble">${escapeHTML(step.body)}${by}</div>`;
     }
-    return `<div class="fb-msg">${bubble}${this._reactionsHTML(step)}</div>`;
+    return `<div class="fb-msg">${bubble}${this._reactionsHTML(step, team)}</div>`;
   }
 
   // Chips overlapping the bubble's bottom edge. On the team's notes and
   // questions the reporter toggles theirs and adds more from the picker;
   // the team's emoji on the reporter's own messages are read-only.
-  _reactionsHTML(step) {
+  _reactionsHTML(step, readOnly = false) {
     const { T } = this;
     const groups = reactionGroups(step);
-    const mine = canReact(step);
+    const mine = !readOnly && canReact(step);
     if (!mine && groups.length === 0) return "";
     const id = escapeHTML(step.id);
     const chips = groups.map((g) => {
@@ -1335,13 +1505,31 @@ function loadShownReactions() {
   }
 }
 
+function loadFilter() {
+  try {
+    const filter = localStorage.getItem(FILTER_KEY);
+    return REPORT_FILTERS.includes(filter) ? filter : "mine";
+  } catch (_e) {
+    return "mine";
+  }
+}
+
+function saveFilter(filter) {
+  try {
+    localStorage.setItem(FILTER_KEY, filter);
+  } catch (_e) {
+    // Private mode or full storage: the list starts on "Mine" next time.
+  }
+}
+
 // Selector that finds the same control again after a re-render.
 function focusSelector(el) {
   if (el.dataset.reportId) return `[data-report-id="${CSS.escape(el.dataset.reportId)}"]`;
   if (el.dataset.action) {
     const step = el.dataset.stepId ? `[data-step-id="${CSS.escape(el.dataset.stepId)}"]` : "";
     const emoji = el.dataset.emoji ? `[data-emoji="${CSS.escape(el.dataset.emoji)}"]` : "";
-    return `[data-action="${CSS.escape(el.dataset.action)}"]${step}${emoji}`;
+    const filter = el.dataset.filter ? `[data-filter="${CSS.escape(el.dataset.filter)}"]` : "";
+    return `[data-action="${CSS.escape(el.dataset.action)}"]${step}${emoji}${filter}`;
   }
   if (el.matches(".fb-verdict-detail")) return ".fb-verdict-detail";
   if (el.matches(".fb-pick-search")) return ".fb-pick-search";

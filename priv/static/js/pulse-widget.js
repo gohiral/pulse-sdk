@@ -104,6 +104,30 @@ const T = {
   close: "Close",
   reconnecting: "Reconnecting…",
   reportsEmpty: "No reports yet",
+  // Feedback teams (set up in pulse): members see each other's reports.
+  // The list's title with the filter chips, the chips, and a teammate's
+  // report, which is read-only and can be followed.
+  reports: "Feedback",
+  filterLabel: "Show",
+  filterMine: "Mine",
+  filterTeam: "Team",
+  filterAll: "All",
+  teamReportsEmpty: "Nobody in your team has sent feedback yet",
+  affected: "{count} affected",
+  reportedByOn: "from {name}, {date}",
+  following: "Following",
+  followingSub: "You'll hear when it's fixed.",
+  followAsk: "Does this affect you too?",
+  followAskSub: "Then you'll hear when it's fixed.",
+  follow: "Affects me too",
+  unfollow: "Stop following",
+  followFailed: "Couldn't save that",
+  theirAnswer: "{name}'s answer · {time}",
+  aboutTheirAnswer: "About {name}'s answer “{answer}”",
+  // On one's own report: the teammates following it ("Lena and Marc").
+  alsoAffects: "Also affects {names}",
+  // A team question on a teammate's report: theirs to answer.
+  stepQuestionFor: "Question for {name}",
   unread: "new update",
   status: {
     received: "Received",
@@ -162,6 +186,8 @@ const T = {
   fabReaction: "{name} reacted {emoji} to your message",
   peekFixed: "Fixed: {title}",
   peekFixedSub: "Live now · try it and tell us if it works",
+  // A fix on a teammate's report this person follows.
+  peekFixedFollowedSub: "Live now · a report you follow",
   peekQuestion: "The team asked about your report",
   peekQuestionSub: "click to answer",
   peekMany: "{count} updates on your reports",

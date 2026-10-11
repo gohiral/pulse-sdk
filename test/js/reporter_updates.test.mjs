@@ -5,16 +5,19 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  affectedCount,
   canReact,
   changedReports,
   dotStatus,
   escapeHTML,
   filterEmoji,
+  filterReports,
   firstEmoji,
   fmt,
   formatDate,
   freshTeamReactions,
   hasUpdate,
+  isTeamReport,
   isTypingTarget,
   joinPeek,
   labelFor,
@@ -35,6 +38,7 @@ import {
   unshownTeamReactions,
   upsertReport,
   verdictNodeKey,
+  watchedReports,
   withoutStep,
   withStep,
 } from "../../priv/static/js/reporter_view.js";
@@ -602,5 +606,36 @@ describe("links and focus", () => {
     assert.equal(isTypingTarget({ tagName: "INPUT", type: "checkbox" }), false);
     assert.equal(isTypingTarget({ tagName: "BUTTON" }), false);
     assert.equal(isTypingTarget(null), false);
+  });
+});
+
+describe("feedback teams", () => {
+  const own = { id: "own", reported_at: "2026-10-10T10:00:00Z", steps: [] };
+  const followed = {
+    id: "followed",
+    relation: "followed",
+    reported_at: "2026-10-11T09:00:00Z",
+    followers: ["Sandra", "Lena"],
+    steps: [{ id: "s1", author: "team", kind: "status", status: "fixed", seen: false }],
+    status: "fixed",
+  };
+  const team = { id: "team", relation: "team", reported_at: "2026-10-09T09:00:00Z", steps: [] };
+
+  test("own and followed reports notify; a teammate's other reports don't", () => {
+    assert.deepEqual(watchedReports([own], [followed, team]).map((r) => r.id), ["followed", "own"]);
+    assert.equal(unseenCount(watchedReports([own], [followed, team])), 1);
+    assert.equal(isTeamReport(own), false);
+    assert.equal(isTeamReport(team), true);
+  });
+
+  test("the chips list mine (own and followed), team (every teammate's) or all", () => {
+    assert.deepEqual(filterReports("mine", [own], [followed, team]).map((r) => r.id), ["followed", "own"]);
+    assert.deepEqual(filterReports("team", [own], [followed, team]).map((r) => r.id), ["followed", "team"]);
+    assert.deepEqual(filterReports("all", [own], [followed, team]).map((r) => r.id), ["followed", "own", "team"]);
+  });
+
+  test("a report affects its reporter and its followers", () => {
+    assert.equal(affectedCount(followed), 3);
+    assert.equal(affectedCount(team), 1);
   });
 });

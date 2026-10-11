@@ -178,6 +178,35 @@ export function upsertReport(reports, report) {
   return sortReports([...(reports || []).filter((r) => r.id !== report.id), report]);
 }
 
+// ---------------------------------------------------------------------------
+// Teams: teammates' reports carry `relation` ("followed" or "team")
+// ---------------------------------------------------------------------------
+
+export const REPORT_FILTERS = ["mine", "team", "all"];
+
+export function isTeamReport(report) {
+  return Boolean(report?.relation);
+}
+
+// The reports that notify this person (dot, peeks): their own and the
+// teammates' ones they follow.
+export function watchedReports(reports, teamReports) {
+  return sortReports([...(reports || []), ...(teamReports || []).filter((r) => r.relation === "followed")]);
+}
+
+// The list behind a filter chip: "mine" (own and followed), "team" (every
+// teammate's) or "all".
+export function filterReports(filter, reports, teamReports) {
+  if (filter === "team") return sortReports(teamReports);
+  if (filter === "all") return sortReports([...(reports || []), ...(teamReports || [])]);
+  return watchedReports(reports, teamReports);
+}
+
+// The people a report affects: its reporter and its followers.
+export function affectedCount(report) {
+  return 1 + (report?.followers?.length || 0);
+}
+
 export function withStep(report, step) {
   return { ...report, steps: [...(report.steps || []), step] };
 }

@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.4.1"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.0"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.4.1"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.0"}
   ]
 end
 ```
@@ -350,6 +350,19 @@ A report turns "Fixed" once its issue is both shipped and done in
 Linear, whichever comes last. Projects that never report releases fall
 back to "Fixed" at Linear's "Done".
 
+### Feedback teams (0.5.0)
+
+People who work in an app together can see each other's feedback, so
+nobody reports the same thing twice. The pulse team sets up teams per
+project on the project page in pulse (a name and members' e-mails);
+your app changes nothing beyond the SDK version. In a team the list is
+titled "Feedback" and gets chips: "Mine" (own reports and followed ones),
+"Team" (every teammate's report, with the reporter's first name and how
+many it affects) and "All"; the last choice is remembered. A teammate's
+report opens read-only with an "Affects me too" bar. Following it brings
+its fix to this person like their own report (dot, peek, e-mail);
+questions stay the reporter's. People in no team see the list as before.
+
 ### Deep links
 
 `?hi-pulse-report=<issue id>` in a page URL (or the older
@@ -376,8 +389,16 @@ emoji"), `T.emojiSearch` ("Search, or type any emoji"), `T.emojiHint`,
 {emoji}"); `T.yourReaction` and `T.reactedBy` are gone. The search
 matches the grid's built-in English and German keywords, whatever the
 copy says.
-`{title}`, `{count}`, `{n}`, `{date}`, `{emoji}`, `{name}`, `{time}` and
-`{answer}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
+Feedback teams (0.5.0) add `T.reports` ("Feedback"), `T.filterLabel`,
+`T.filterMine`, `T.filterTeam`, `T.filterAll`, `T.teamReportsEmpty`,
+`T.affected` ("{count} affected"), `T.reportedByOn` ("from {name},
+{date}"), `T.following`, `T.followingSub`, `T.followAsk`,
+`T.followAskSub`, `T.follow` ("Affects me too"), `T.unfollow`,
+`T.followFailed`, `T.theirAnswer`, `T.aboutTheirAnswer`,
+`T.stepQuestionFor` ("Question for {name}"), `T.peekFixedFollowedSub` and
+`T.alsoAffects` ("Also affects {names}", on one's own report).
+`{title}`, `{count}`, `{n}`, `{date}`, `{emoji}`, `{name}`, `{names}`,
+`{time}` and `{answer}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
 formats dates like "2 Oct".
 
 ## Automatic error capture
