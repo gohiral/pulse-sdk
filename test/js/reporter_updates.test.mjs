@@ -9,6 +9,7 @@ import {
   canReact,
   changedReports,
   dotStatus,
+  eligibleJoinIds,
   escapeHTML,
   filterEmoji,
   filterReports,
@@ -23,9 +24,11 @@ import {
   labelFor,
   latestTeamMessage,
   livePeek,
+  mergeDismissed,
   mergePeek,
   openQuestion,
   peekKind,
+  peekStepIds,
   reactionGroups,
   readDeepLink,
   stripDeepLink,
@@ -153,6 +156,45 @@ describe("peek decisions", () => {
     assert.equal(joinPeek([report()]), null);
     assert.deepEqual(joinPeek([report(), fixedReport("a")]), { kind: "fixed", id: "a" });
     assert.deepEqual(joinPeek([fixedReport("a"), questionReport("b")]), { kind: "many" });
+  });
+
+  test("joinPeek: a dismissed peek doesn't rise again on page load, a new step does", () => {
+    const fixed = fixedReport("a");
+    const question = questionReport("b");
+    const dismissed = new Set(peekStepIds({ kind: "many" }, [fixed, question]));
+    assert.equal(joinPeek([fixed, question], dismissed), null);
+    // The team asks again on the same report: that question peeks.
+    const asked = { ...question, steps: [...question.steps, step({ kind: "question", body: "And?", seen: false })] };
+    assert.deepEqual(joinPeek([fixed, asked], dismissed), { kind: "needs_info", id: "b" });
+    // Dismissing one report leaves the other's peek alone.
+    const onlyA = new Set(peekStepIds({ kind: "fixed", id: "a" }, [fixed, question]));
+    assert.deepEqual(joinPeek([fixed, question], onlyA), { kind: "needs_info", id: "b" });
+  });
+
+  test("mergeDismissed: another tab's stored dismissals survive, newest kept", () => {
+    // Tab A stored s1; tab B loaded nothing and now dismisses s2.
+    assert.deepEqual(mergeDismissed(["s1"], new Set(), ["s2"]), ["s1", "s2"]);
+    assert.deepEqual(mergeDismissed(["s1", "s2"], new Set(["s2"]), ["s2"]), ["s1", "s2"]);
+    assert.deepEqual(mergeDismissed(["a", "b"], [], ["c"], 2), ["b", "c"]);
+    // Full history: this tab still holds s1..s200, another tab moved storage
+    // on to s2..s201. A new dismissal keeps s3..s202, not the stale s1.
+    const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `s${from + i}`);
+    assert.deepEqual(mergeDismissed(range(2, 201), range(1, 200), ["s202"]), range(3, 202));
+  });
+
+  test("eligibleJoinIds: only reports with an undismissed peek step", () => {
+    const fixed = fixedReport("a");
+    const question = questionReport("b");
+    assert.deepEqual(eligibleJoinIds([report({ id: "c" }), fixed, question]), ["a", "b"]);
+    assert.deepEqual(eligibleJoinIds([fixed, question], new Set([fixed.steps[1].id])), ["b"]);
+  });
+
+  test("peekStepIds: only the steps that make a report peek", () => {
+    const progress = report({ id: "c", status: "in_progress", steps: [step({ status: "in_progress", seen: false })] });
+    const fixed = fixedReport("a");
+    assert.deepEqual(peekStepIds({ kind: "many" }, [progress, fixed]), [fixed.steps[1].id]);
+    assert.deepEqual(peekStepIds({ kind: "fixed", id: "c" }, [progress, fixed]), []);
+    assert.deepEqual(peekStepIds(null, [fixed]), []);
   });
 
   test("livePeek: a new question peeks", () => {

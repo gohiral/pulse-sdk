@@ -102,22 +102,55 @@ export function dotStatus(reports) {
 // Whether a report deserves a peek right now: an open question, or a fix
 // the reporter hasn't seen. Everything else only lights the dot.
 export function peekKind(report) {
+  return peekSteps(report).length > 0 ? report.status : null;
+}
+
+// The unseen steps that make a report peek: the team's open question, or
+// the fix that went live. Empty when the report only lights the dot.
+export function peekSteps(report) {
   const unseen = unseenSteps(report);
-  if (report.status === "needs_info" && unseen.some((s) => s.kind === "question")) {
-    return "needs_info";
-  }
-  if (report.status === "fixed" && unseen.some((s) => s.kind === "status" && s.status === "fixed")) {
-    return "fixed";
-  }
-  return null;
+  if (report?.status === "needs_info") return unseen.filter((s) => s.kind === "question");
+  if (report?.status === "fixed") return unseen.filter((s) => s.kind === "status" && s.status === "fixed");
+  return [];
 }
 
 // Peek to show after joining (page load): one report, several, or none.
-export function joinPeek(reports) {
-  const candidates = (reports || []).filter(peekKind);
+// `dismissed` holds the step ids of peeks the reporter already sent away
+// or opened; those don't rise again on every page load, only a new step does.
+export function joinPeek(reports, dismissed = new Set()) {
+  const candidates = joinCandidates(reports, dismissed);
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return { kind: peekKind(candidates[0]), id: candidates[0].id };
   return { kind: "many" };
+}
+
+// The dismissed step ids to store: this tab's (possibly stale) set, then
+// what storage holds now, then the new ones. A repeat moves to its latest
+// position, so the cap drops the oldest, never another tab's newer ones.
+export function mergeDismissed(stored, own, ids, cap = 200) {
+  const merged = new Set();
+  for (const id of [...(own || []), ...(stored || []), ...(ids || [])]) {
+    merged.delete(id);
+    merged.add(id);
+  }
+  return [...merged].slice(-cap);
+}
+
+// Ids of the reports a page-load peek may show.
+export function eligibleJoinIds(reports, dismissed = new Set()) {
+  return joinCandidates(reports, dismissed).map((r) => r.id);
+}
+
+function joinCandidates(reports, dismissed) {
+  return (reports || []).filter((r) => peekSteps(r).some((s) => !dismissed.has(s.id)));
+}
+
+// The step ids a shown peek covers, remembered when the reporter dismisses
+// or opens it: one report's, or every peekable report's for "many".
+export function peekStepIds(shown, reports) {
+  const list = reports || [];
+  const covered = shown?.kind === "many" ? list : list.filter((r) => r.id === shown?.id);
+  return covered.flatMap((r) => peekSteps(r).map((s) => s.id));
 }
 
 // What a live push of `next` (previously `prev`) should trigger: a question

@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.0"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.1"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.0"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.1"}
   ]
 end
 ```
@@ -332,10 +332,11 @@ back to its own peek when it can't find one. The slot is
 
 ### Report releases
 
-Linear's "Done" usually means merged, not live. To mark reports fixed
-when the fix reaches production, post each production release's Linear
-identifiers to pulse from your deploy pipeline, authenticated with the
-same secret:
+A report turns "Fixed" when its Linear issue is Done, and Done means
+live in production. Merged work waits in Linear's "In Review" until a
+release ships it. Post each production release's Linear identifiers to
+pulse from your deploy pipeline, authenticated with the same secret, and
+pulse moves those issues from "In Review" to "Done":
 
 ```bash
 curl -fsS -X POST "$HI_PULSE_SERVER_URL/api/v1/projects/my-app/releases" \
@@ -346,9 +347,9 @@ curl -fsS -X POST "$HI_PULSE_SERVER_URL/api/v1/projects/my-app/releases" \
 
 `issues` lists the Linear identifiers of the commits the release shipped,
 e.g. `git log --format=%B "$PREVIOUS_SHA..$SHA" | grep -oE '\bHI-[0-9]+\b' | sort -u`.
-A report turns "Fixed" once its issue is both shipped and done in
-Linear, whichever comes last. Projects that never report releases fall
-back to "Fixed" at Linear's "Done".
+Issues in other states (still in progress, already done) are left
+alone. Without release reports, move issues to "Done" once they are
+live.
 
 ### Feedback teams (0.5.0)
 
@@ -397,6 +398,7 @@ Feedback teams (0.5.0) add `T.reports` ("Feedback"), `T.filterLabel`,
 `T.followFailed`, `T.theirAnswer`, `T.aboutTheirAnswer`,
 `T.stepQuestionFor` ("Question for {name}"), `T.peekFixedFollowedSub` and
 `T.alsoAffects` ("Also affects {names}", on one's own report).
+0.5.1 adds `T.peekDismiss` ("Dismiss"), the label of the peek's close button.
 `{title}`, `{count}`, `{n}`, `{date}`, `{emoji}`, `{name}`, `{names}`,
 `{time}` and `{answer}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
 formats dates like "2 Oct".

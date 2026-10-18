@@ -1137,7 +1137,7 @@
 
 .fb-icon-btn:focus-visible,
 .fb-head-link:focus-visible,
-.fb-peek-card:focus-visible {
+.fb-peek-open:focus-visible {
   outline: 2px solid var(--color-active);
   outline-offset: 2px;
 }
@@ -1179,23 +1179,42 @@
   display: none;
 }
 
+/* The card holds two buttons: the body opens the update, the X sends the
+   peek away for good (touch screens have no Esc). */
 .fb-peek-card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
   width: 100%;
-  padding: 10px 12px;
   border: 1px solid var(--color-edge);
   border-radius: 8px;
   background: var(--color-canvas);
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
   box-shadow:
     0 24px 56px rgb(0 0 0 / 0.16),
     0 8px 16px rgb(0 0 0 / 0.08),
     0 0 0 1px rgb(0 0 0 / 0.04);
+}
+
+.fb-peek-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 4px 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 30px target next to the chevron, on the card's top edge. */
+.fb-peek-close {
+  flex-shrink: 0;
+  margin: 4px 4px 0 0;
+  padding: 8px;
 }
 
 .fb-peek-card .fb-status-dot {
@@ -1244,7 +1263,7 @@
   transition: color 100ms ease;
 }
 
-.fb-peek-card:hover .fb-peek-chev {
+.fb-peek-open:hover .fb-peek-chev {
   color: var(--color-ink);
 }
 

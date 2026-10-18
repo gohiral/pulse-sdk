@@ -192,6 +192,7 @@ const T = {
   peekQuestionSub: "click to answer",
   peekMany: "{count} updates on your reports",
   peekManySub: "Open your reports",
+  peekDismiss: "Dismiss",
   // Fills <HiPulse.Components.release_note /> in the host's reload banner.
   releaseNote: "Includes your fix: {title}",
   time: {

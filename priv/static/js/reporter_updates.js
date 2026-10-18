@@ -32,6 +32,7 @@ import {
   filterReports,
   firstEmoji,
   fmt,
+  eligibleJoinIds,
   formatDate,
   freshTeamReactions,
   teamReactions,
@@ -42,8 +43,10 @@ import {
   labelFor,
   latestTeamMessage,
   livePeek,
+  mergeDismissed,
   mergePeek,
   openQuestion,
+  peekStepIds,
   reactionGroups,
   readDeepLink,
   stripDeepLink,
@@ -78,6 +81,9 @@ const REACTION_LEAVE_MS = 260;
 const REACTION_GAP_MS = 600;
 // Team reactions the FAB already showed, so a page load doesn't replay them.
 const SHOWN_REACTIONS_KEY = "hi-pulse-shown-reactions";
+// Steps whose peek the reporter dismissed or opened, so a page load doesn't
+// raise it again; the dot on the FAB stays until the report is opened.
+const DISMISSED_PEEKS_KEY = "hi-pulse-dismissed-peeks";
 // The list's filter chip last picked: "mine", "team" or "all".
 const FILTER_KEY = "hi-pulse-report-filter";
 
@@ -117,6 +123,7 @@ export class ReporterUpdates {
     this.reactionQueue = [];
     this.reaction = null;
     this.shownReactions = loadShownReactions();
+    this.dismissedPeeks = loadDismissedPeeks();
 
     this._buildDot();
     this._buildPeek();
@@ -252,8 +259,17 @@ export class ReporterUpdates {
     } else {
       this.joined = true;
       if (!this._openDeepLink()) {
-        const peek = joinPeek(this._watched());
-        if (peek) this._setTimer("joinPeek", () => this._queuePeek(peek), JOIN_PEEK_DELAY_MS);
+        // Only the reports eligible at join; dismissals are checked again
+        // when the timer fires, so a live peek dismissed meanwhile stays
+        // away, and a fix handed to the release banner meanwhile isn't peeked.
+        const eligible = new Set(eligibleJoinIds(this._watched(), this.dismissedPeeks));
+        if (eligible.size > 0) {
+          this._setTimer("joinPeek", () => {
+            const reports = this._watched().filter((r) => eligible.has(r.id));
+            const peek = joinPeek(reports, this.dismissedPeeks);
+            if (peek) this._queuePeek(peek);
+          }, JOIN_PEEK_DELAY_MS);
+        }
       }
       this._queueReactions(unshownTeamReactions(this.reports, this.shownReactions, Date.now()));
     }
@@ -410,7 +426,8 @@ export class ReporterUpdates {
     el.setAttribute("role", "status");
     el.hidden = true;
     el.addEventListener("click", (e) => {
-      if (e.target.closest(".fb-peek-card")) this._openPeek();
+      if (e.target.closest(".fb-peek-close")) this._dismissPeek();
+      else if (e.target.closest(".fb-peek-open")) this._openPeek();
     });
     el.addEventListener("mouseenter", () => this._clearTimer("peekHide"));
     el.addEventListener("mouseleave", () => this._scheduleAutoHide());
@@ -478,11 +495,14 @@ export class ReporterUpdates {
         <span class="fb-peek-sub">${escapeHTML(isTeamReport(peek.report) ? T.peekFixedFollowedSub : T.peekFixedSub)}</span>`;
     }
     this.peekEl.innerHTML = `
-      <button type="button" class="fb-peek-card">
-        <span class="fb-status-dot" data-status="${dot}" aria-hidden="true"></span>
-        <span class="fb-peek-text">${body}</span>
-        ${chevron}
-      </button>`;
+      <div class="fb-peek-card">
+        <button type="button" class="fb-peek-open">
+          <span class="fb-status-dot" data-status="${dot}" aria-hidden="true"></span>
+          <span class="fb-peek-text">${body}</span>
+          ${chevron}
+        </button>
+        <button type="button" class="fb-icon-btn fb-peek-close" aria-label="${escapeHTML(T.peekDismiss)}">${closeIcon()}</button>
+      </div>`;
     this.shownPeek = peek.kind === "many" ? { kind: "many" } : { kind: peek.kind, id: peek.report.id };
     this.peekAutoHide = peek.kind === "fixed" || (peek.kind === "many" && !peek.stays);
     this.peekEl.hidden = false;
@@ -508,8 +528,28 @@ export class ReporterUpdates {
     this.peekEl.replaceChildren();
   }
 
+  // The X or Esc: the peek goes away and stays away on later page loads.
+  _dismissPeek() {
+    this._rememberPeek();
+    this._hidePeek();
+  }
+
+  _rememberPeek() {
+    const ids = peekStepIds(this.shownPeek, this._watched());
+    if (ids.length === 0) return;
+    // Merged with the stored list, so another open tab's dismissals survive.
+    const merged = mergeDismissed(loadDismissedPeeks(), this.dismissedPeeks, ids);
+    this.dismissedPeeks = new Set(merged);
+    try {
+      localStorage.setItem(DISMISSED_PEEKS_KEY, JSON.stringify(merged));
+    } catch (_e) {
+      // Private mode or full storage: the peek comes back on the next page load.
+    }
+  }
+
   _openPeek() {
     const peek = this.shownPeek;
+    this._rememberPeek();
     this._hidePeek();
     if (!peek) return;
     if (peek.kind === "many") this.openList();
@@ -811,7 +851,7 @@ export class ReporterUpdates {
         this.closePanel();
       }
     } else if (this.shownPeek) {
-      this._hidePeek();
+      this._dismissPeek();
     }
   }
 
@@ -1500,6 +1540,15 @@ function loadShownReactions() {
   try {
     const keys = JSON.parse(localStorage.getItem(SHOWN_REACTIONS_KEY) || "[]");
     return new Set(Array.isArray(keys) ? keys : []);
+  } catch (_e) {
+    return new Set();
+  }
+}
+
+function loadDismissedPeeks() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(DISMISSED_PEEKS_KEY) || "[]");
+    return new Set(Array.isArray(ids) ? ids : []);
   } catch (_e) {
     return new Set();
   }
