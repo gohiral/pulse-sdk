@@ -1,7 +1,7 @@
 defmodule HiPulse.MixProject do
   use Mix.Project
 
-  @version "0.5.1"
+  @version "0.6.0"
   @source_url "https://github.com/gohiral/pulse-sdk"
 
   def project do

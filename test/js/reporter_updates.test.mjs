@@ -27,6 +27,8 @@ import {
   mergeDismissed,
   mergePeek,
   openQuestion,
+  originalMessage,
+  pageLabel,
   peekKind,
   peekStepIds,
   reactionGroups,
@@ -588,6 +590,51 @@ describe("timeline", () => {
     const nodes = timeline(report({ steps: [] }));
     assert.equal(nodes[0].status, "received");
     assert.equal(nodes[0].at, "2026-10-02T14:20:00Z");
+  });
+});
+
+describe("what the reporter sent", () => {
+  const shot = "https://bucket.example/feedback/app/shot.png";
+  const page = "https://app.hiral.io/leads/42";
+
+  test("the description, the screenshot and the page, with a short page label", () => {
+    const original = originalMessage(
+      report({ description: "  Ä turns into ?\n", screenshot_url: shot, page_url: page }),
+    );
+    assert.deepEqual(original, {
+      text: "Ä turns into ?",
+      screenshot: shot,
+      page,
+      pageLabel: "app.hiral.io/leads/42",
+    });
+  });
+
+  test("a title-only report still shows its screenshot and page", () => {
+    const original = originalMessage(report({ description: null, screenshot_url: shot, page_url: page }));
+    assert.equal(original.text, null);
+    assert.equal(original.screenshot, shot);
+  });
+
+  test("nothing sent, or a server before it was sent: null", () => {
+    assert.equal(originalMessage(report()), null);
+    assert.equal(originalMessage(report({ description: " ", screenshot_url: null, page_url: null })), null);
+  });
+
+  test("a screenshot that failed to load is left out", () => {
+    const r = report({ screenshot_url: shot, page_url: page });
+    assert.equal(originalMessage(r, new Set([shot])).screenshot, null);
+    assert.equal(originalMessage(r, new Set([shot])).page, page);
+  });
+
+  test("only http(s) addresses reach href and src", () => {
+    const r = report({ screenshot_url: "javascript:alert(1)", page_url: "data:text/html,x" });
+    assert.equal(originalMessage(r), null);
+  });
+
+  test("pageLabel drops scheme, query, fragment and a trailing slash", () => {
+    assert.equal(pageLabel("https://app.hiral.io/leads/?tab=1#top"), "app.hiral.io/leads");
+    assert.equal(pageLabel("http://localhost:4000/"), "localhost:4000");
+    assert.equal(pageLabel("not a url"), "");
   });
 });
 

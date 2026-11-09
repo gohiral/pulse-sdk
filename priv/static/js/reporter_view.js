@@ -540,6 +540,41 @@ function followed(threads, questionId) {
   return { question, answer: thread.answers[0] || null };
 }
 
+// What the reporter sent, shown on the first step so the timeline says
+// what it is about: `{text, screenshot, page, pageLabel}`, or null when
+// the report carries none of it (servers before it was sent). The title
+// is the report's heading already; `text` is the description. A teammate's
+// report never has a screenshot. `broken` holds screenshot URLs that
+// failed to load (deleted after 90 days), which are left out.
+export function originalMessage(report, broken = new Set()) {
+  const text = String(report?.description ?? "").trim() || null;
+  const shot = httpUrl(report?.screenshot_url);
+  const screenshot = shot && !broken.has(shot) ? shot : null;
+  const page = httpUrl(report?.page_url);
+  if (!text && !screenshot && !page) return null;
+  return { text, screenshot, page, pageLabel: page ? pageLabel(page) : null };
+}
+
+// The address itself when it is http(s), else null: it lands in `href`
+// and `src`, where `javascript:` must never get through.
+export function httpUrl(value) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// "https://app.hiral.io/leads/?tab=1#top" → "app.hiral.io/leads".
+export function pageLabel(value) {
+  const href = httpUrl(value);
+  if (!href) return "";
+  const url = new URL(href);
+  return (url.host + url.pathname).replace(/\/+$/, "");
+}
+
 // The question thread waiting for the reporter's answer, or null.
 export function openQuestion(nodes) {
   return (nodes || []).find((n) => n.open) || null;

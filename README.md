@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.1"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.6.0"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.5.1"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.6.0"}
   ]
 end
 ```
@@ -256,7 +256,9 @@ Tighten the gate as needed:
 
 Reporters see what happened to their feedback inside your app: status
 changes from Linear, notes and questions from the team, and the moment
-the fix is live. They answer questions and confirm the fix ("Works now" /
+the fix is live. The first step shows what they sent (0.6.0): their
+description, the annotated screenshot (a thumbnail that opens full size)
+and the page they were on, so a short title still says what it is about. They answer questions and confirm the fix ("Works now" /
 "Still broken") from the same panel; both land on the Linear issue as
 comments. A question and its answer read as one thread: an open question
 carries its own answer field, and the answer then hangs under it. The
@@ -399,8 +401,11 @@ Feedback teams (0.5.0) add `T.reports` ("Feedback"), `T.filterLabel`,
 `T.stepQuestionFor` ("Question for {name}"), `T.peekFixedFollowedSub` and
 `T.alsoAffects` ("Also affects {names}", on one's own report).
 0.5.1 adds `T.peekDismiss` ("Dismiss"), the label of the peek's close button.
+0.6.0 adds `T.openScreenshot` ("Open screenshot", the thumbnail's label)
+and `T.sentFrom` ("Sent from {page}"; `{page}` becomes the link to the
+page the report came from).
 `{title}`, `{count}`, `{n}`, `{date}`, `{emoji}`, `{name}`, `{names}`,
-`{time}` and `{answer}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
+`{time}`, `{answer}` and `{page}` are filled in at runtime; keep them when translating. `T.locale` (default `"en-GB"`)
 formats dates like "2 Oct".
 
 ## Automatic error capture

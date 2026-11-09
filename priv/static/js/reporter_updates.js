@@ -46,6 +46,7 @@ import {
   mergeDismissed,
   mergePeek,
   openQuestion,
+  originalMessage,
   peekStepIds,
   reactionGroups,
   readDeepLink,
@@ -110,6 +111,9 @@ export class ReporterUpdates {
     this.answerDrafts = new Map();
     // The answer field last scrolled into view ("<report id>|<question id>").
     this.revealedAnswer = null;
+    // Screenshot URLs that failed to load (expired after 90 days); left
+    // out on the next render instead of showing a broken image.
+    this.brokenShots = new Set();
     this.verdict = null;
     // The emoji picker, open on one team message:
     // `{stepId, more, query}` ("…" expanded, the search text).
@@ -783,6 +787,8 @@ export class ReporterUpdates {
         <div class="fb-rp-follow" hidden></div>
       </div>`;
     panel.addEventListener("click", (e) => this._onPanelClick(e));
+    // `error` doesn't bubble; catch a screenshot that fails on the way down.
+    panel.addEventListener("error", (e) => this._onShotError(e), true);
     const form = panel.querySelector(".fb-rp-reply");
     form.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -897,6 +903,15 @@ export class ReporterUpdates {
       case "rx-pick":
         return this._react(target.dataset.stepId, target.dataset.emoji);
     }
+  }
+
+  // A screenshot that is gone (expired) disappears with its link rather
+  // than showing a broken image, now and on every later render.
+  _onShotError(e) {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.matches(".fb-orig-shot img")) return;
+    this.brokenShots.add(img.closest(".fb-orig-shot").href);
+    img.closest(".fb-orig-shot").remove();
   }
 
   // Reply field when answering a question, else the first control.
@@ -1082,6 +1097,8 @@ export class ReporterUpdates {
     const nodes = timeline(report);
     if (team) nodes.forEach((node) => (node.open = false));
     const verdictKey = team ? null : verdictNodeKey(report, nodes);
+    // What the reporter sent rides on the first step, where it began.
+    const original = originalMessage(report, this.brokenShots);
     this.panel.querySelector(".fb-rp-body").innerHTML = `
       <div class="fb-rp-report-head">
         <h3 class="fb-rp-report-title">${escapeHTML(report.title)}</h3>
@@ -1089,7 +1106,7 @@ export class ReporterUpdates {
         ${team ? "" : this._alsoAffectsHTML(report, "fb-rp-meta")}
       </div>
       <ol class="fb-tl">
-        ${nodes.map((node) => this._stepHTML(node, report, node.key === verdictKey, now)).join("")}
+        ${nodes.map((node, i) => this._stepHTML(node, report, node.key === verdictKey, now, i === 0 ? original : null)).join("")}
       </ol>`;
     this.pulseNow = false;
 
@@ -1142,7 +1159,7 @@ export class ReporterUpdates {
       });
   }
 
-  _stepHTML(node, report, withVerdict, now) {
+  _stepHTML(node, report, withVerdict, now, original = null) {
     const { T } = this;
     const isNew = node.stepIds.some((id) => this.newStepIds.has(id));
     // The fix still ahead reads as the promise alone: a gray "Fixed" title
@@ -1167,12 +1184,39 @@ export class ReporterUpdates {
         <div class="fb-step-main">
           <p class="fb-step-label">${escapeHTML(label)}${isNew ? `<span class="fb-new-tag">${escapeHTML(T.newTag)}</span>` : ""}</p>
           ${hint ? `<p class="fb-step-hint">${escapeHTML(hint)}</p>` : ""}
+          ${original ? this._originalHTML(original, report) : ""}
           ${node.question ? this._threadHTML(node, report, now) : ""}
           ${node.bubbles.map((step) => this._bubbleHTML(step, { report })).join("")}
           ${withVerdict ? this._verdictHTML(report) : ""}
         </div>
         ${node.at ? `<time class="fb-step-time" datetime="${escapeHTML(node.at)}">${escapeHTML(relativeTime(node.at, now, T))}</time>` : ""}
       </li>`;
+  }
+
+  // The report as it was sent: the description as the reporter's own
+  // bubble, the annotated screenshot (opens full size in a new tab) and
+  // the page it came from.
+  _originalHTML(original, report) {
+    const { T } = this;
+    const parts = [];
+    if (original.text) {
+      const author = isTeamReport(report) ? report.reporter_name || "" : T.you;
+      parts.push(
+        `<div class="fb-bubble fb-bubble-mine"><span class="fb-bubble-by">${escapeHTML(author)} · </span>${escapeHTML(original.text)}</div>`,
+      );
+    }
+    if (original.screenshot) {
+      const url = escapeHTML(original.screenshot);
+      parts.push(
+        `<a class="fb-orig-shot" href="${url}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHTML(T.openScreenshot)}" title="${escapeHTML(T.openScreenshot)}"><img src="${url}" alt="" loading="lazy" decoding="async"></a>`,
+      );
+    }
+    if (original.page) {
+      const link = `<a class="fb-orig-page-link" href="${escapeHTML(original.page)}" target="_blank" rel="noopener noreferrer">${escapeHTML(original.pageLabel)}</a>`;
+      const [before, after = ""] = String(T.sentFrom).split("{page}");
+      parts.push(`<p class="fb-orig-page">${escapeHTML(before)}${link}${escapeHTML(after)}</p>`);
+    }
+    return `<div class="fb-orig">${parts.join("")}</div>`;
   }
 
   // One line under the current step: what its status means. Past steps

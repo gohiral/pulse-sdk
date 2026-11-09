@@ -146,6 +146,10 @@ const T = {
   },
   stepTodoFixed: "We'll tell you once the fix is live",
   reportedOn: "reported {date}",
+  // What the reporter sent, on the first step: the screenshot link's
+  // label and the page it came from (`{page}` becomes a link).
+  openScreenshot: "Open screenshot",
+  sentFrom: "Sent from {page}",
   newTag: "New",
   you: "You",
   worksNow: "Works now",

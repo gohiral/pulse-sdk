@@ -1746,6 +1746,63 @@
   margin-top: 2px;
 }
 
+/* What the reporter sent, on the first step: their description as their
+   own bubble, the annotated screenshot in a fixed 16:10 frame (no jump
+   when it loads; letter-boxed like the form's thumbnail) and the page. */
+.fb-orig-shot {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 16 / 10;
+  margin-top: 6px;
+  border: 1px solid var(--color-edge);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-surface);
+  cursor: zoom-in;
+  outline: 0 solid transparent;
+  transition: outline 100ms ease;
+}
+
+.fb-orig-shot:hover {
+  outline: 2px solid color-mix(in oklch, var(--color-active) 35%, transparent);
+}
+
+.fb-orig-shot:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: 2px;
+}
+
+.fb-orig-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.fb-orig-page {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.fb-orig-page-link {
+  color: var(--color-secondary);
+  text-decoration: none;
+}
+
+.fb-orig-page-link:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+}
+
+.fb-orig-page-link:focus-visible {
+  outline: 2px solid var(--color-active);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Reactions: chips on the bubble's bottom edge, ringed in canvas so they
    read on the line. On the team's messages the reporter toggles theirs
    and adds more with the add chip, which shows while the pointer is on
