@@ -111,9 +111,15 @@ export class ReporterUpdates {
     this.answerDrafts = new Map();
     // The answer field last scrolled into view ("<report id>|<question id>").
     this.revealedAnswer = null;
-    // Screenshot URLs that failed to load (expired after 90 days); left
-    // out on the next render instead of showing a broken image.
+    // Ids of reports whose screenshot failed to load (deleted after 90
+    // days); left out on the next render instead of a broken image.
     this.brokenShots = new Set();
+    // The reporter's own screenshots, loaded with their token (there is no
+    // link to them): report id → object URL once loaded, null while loading.
+    this.shots = new Map();
+    this.serverUrl = String(serverUrl || "").replace(/\/+$/, "");
+    this.token = token;
+    this.reporterToken = reporterToken;
     this.verdict = null;
     // The emoji picker, open on one team message:
     // `{stepId, more, query}` ("…" expanded, the search text).
@@ -167,6 +173,8 @@ export class ReporterUpdates {
     this.peekEl?.remove();
     this.dot?.remove();
     this.announcer?.remove();
+    this.shots.forEach((url) => url && URL.revokeObjectURL(url));
+    this.shots.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -910,8 +918,38 @@ export class ReporterUpdates {
   _onShotError(e) {
     const img = e.target;
     if (!(img instanceof HTMLImageElement) || !img.matches(".fb-orig-shot img")) return;
-    this.brokenShots.add(img.closest(".fb-orig-shot").href);
-    img.closest(".fb-orig-shot").remove();
+    this._dropShot(img.closest(".fb-orig-shot").dataset.reportId);
+  }
+
+  // Loads the reporter's own screenshot of report `id` once, with the
+  // ingest token and their reporter token (pulse serves it to nobody
+  // else), and shows the local copy. A copied link to it opens nothing
+  // anywhere else.
+  async _loadShot(id) {
+    if (this.shots.has(id) || this.brokenShots.has(id)) return;
+    this.shots.set(id, null);
+    try {
+      const r = await fetch(`${this.serverUrl}/api/v1/reports/${encodeURIComponent(id)}/screenshot`, {
+        headers: { Authorization: `Bearer ${this.token}`, "X-Hi-Pulse-Reporter": this.reporterToken },
+        credentials: "omit",
+      });
+      if (!r.ok || !/^image\//.test(r.headers.get("content-type") || "")) throw new Error(`HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      if (!this.shots.has(id)) return URL.revokeObjectURL(url);
+      this.shots.set(id, url);
+      if (this.panel) this._renderPanel();
+    } catch {
+      this._dropShot(id);
+    }
+  }
+
+  _dropShot(id) {
+    if (!id) return;
+    const url = this.shots.get(id);
+    if (url) URL.revokeObjectURL(url);
+    this.shots.delete(id);
+    this.brokenShots.add(id);
+    this.panel?.querySelectorAll(".fb-orig-shot").forEach((el) => el.dataset.reportId === id && el.remove());
   }
 
   // Reply field when answering a question, else the first control.
@@ -1206,10 +1244,18 @@ export class ReporterUpdates {
       );
     }
     if (original.screenshot) {
-      const url = escapeHTML(original.screenshot);
-      parts.push(
-        `<a class="fb-orig-shot" href="${url}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHTML(T.openScreenshot)}" title="${escapeHTML(T.openScreenshot)}"><img src="${url}" alt="" loading="lazy" decoding="async"></a>`,
-      );
+      const id = escapeHTML(report.id);
+      const loaded = this.shots.get(report.id);
+      if (loaded) {
+        const url = escapeHTML(loaded);
+        parts.push(
+          `<a class="fb-orig-shot" data-report-id="${id}" href="${url}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHTML(T.openScreenshot)}" title="${escapeHTML(T.openScreenshot)}"><img src="${url}" alt="" decoding="async"></a>`,
+        );
+      } else {
+        // The same 16:10 frame while it loads, so nothing jumps.
+        parts.push(`<span class="fb-orig-shot fb-orig-shot-loading" data-report-id="${id}" aria-hidden="true"></span>`);
+        this._loadShot(report.id);
+      }
     }
     if (original.page) {
       const link = `<a class="fb-orig-page-link" href="${escapeHTML(original.page)}" target="_blank" rel="noopener noreferrer">${escapeHTML(original.pageLabel)}</a>`;

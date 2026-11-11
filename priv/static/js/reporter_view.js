@@ -543,13 +543,14 @@ function followed(threads, questionId) {
 // What the reporter sent, shown on the first step so the timeline says
 // what it is about: `{text, screenshot, page, pageLabel}`, or null when
 // the report carries none of it (servers before it was sent). The title
-// is the report's heading already; `text` is the description. A teammate's
-// report never has a screenshot. `broken` holds screenshot URLs that
-// failed to load (deleted after 90 days), which are left out.
+// is the report's heading already; `text` is the description.
+// `screenshot` is true when the report has one: the widget loads it
+// itself with the reporter's token (there is no link to it). A
+// teammate's report never has one. `broken` holds the ids of reports
+// whose screenshot failed to load (deleted after 90 days), left out.
 export function originalMessage(report, broken = new Set()) {
   const text = String(report?.description ?? "").trim() || null;
-  const shot = httpUrl(report?.screenshot_url);
-  const screenshot = shot && !broken.has(shot) ? shot : null;
+  const screenshot = report?.has_screenshot === true && !broken.has(report.id);
   const page = httpUrl(report?.page_url);
   if (!text && !screenshot && !page) return null;
   return { text, screenshot, page, pageLabel: page ? pageLabel(page) : null };

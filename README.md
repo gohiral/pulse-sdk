@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.6.0"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.0"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -85,7 +85,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.6.0"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.0"}
   ]
 end
 ```
@@ -258,7 +258,11 @@ Reporters see what happened to their feedback inside your app: status
 changes from Linear, notes and questions from the team, and the moment
 the fix is live. The first step shows what they sent (0.6.0): their
 description, the annotated screenshot (a thumbnail that opens full size)
-and the page they were on, so a short title still says what it is about. They answer questions and confirm the fix ("Works now" /
+and the page they were on, so a short title still says what it is about.
+Screenshots are private in pulse (0.7.0): the widget loads the reporter's
+own screenshot with the ingest token and their reporter token and shows
+its local copy, so no link to it works anywhere else. Widgets before
+0.7.0 show reports without the screenshot. They answer questions and confirm the fix ("Works now" /
 "Still broken") from the same panel; both land on the Linear issue as
 comments. A question and its answer read as one thread: an open question
 carries its own answer field, and the answer then hangs under it. The
