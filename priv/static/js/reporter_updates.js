@@ -47,6 +47,7 @@ import {
   mergePeek,
   openQuestion,
   originalMessage,
+  screenshotHTML,
   peekStepIds,
   reactionGroups,
   readDeepLink,
@@ -918,7 +919,7 @@ export class ReporterUpdates {
   _onShotError(e) {
     const img = e.target;
     if (!(img instanceof HTMLImageElement) || !img.matches(".fb-orig-shot img")) return;
-    this._dropShot(img.closest(".fb-orig-shot").dataset.reportId);
+    this._dropShot(img.closest(".fb-orig-shot").dataset.shotId);
   }
 
   // Loads the reporter's own screenshot of report `id` once, with the
@@ -949,7 +950,7 @@ export class ReporterUpdates {
     if (url) URL.revokeObjectURL(url);
     this.shots.delete(id);
     this.brokenShots.add(id);
-    this.panel?.querySelectorAll(".fb-orig-shot").forEach((el) => el.dataset.reportId === id && el.remove());
+    this.panel?.querySelectorAll(".fb-orig-shot").forEach((el) => el.dataset.shotId === id && el.remove());
   }
 
   // Reply field when answering a question, else the first control.
@@ -1244,18 +1245,10 @@ export class ReporterUpdates {
       );
     }
     if (original.screenshot) {
-      const id = escapeHTML(report.id);
+      // The same 16:10 frame while it loads, so nothing jumps.
       const loaded = this.shots.get(report.id);
-      if (loaded) {
-        const url = escapeHTML(loaded);
-        parts.push(
-          `<a class="fb-orig-shot" data-report-id="${id}" href="${url}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHTML(T.openScreenshot)}" title="${escapeHTML(T.openScreenshot)}"><img src="${url}" alt="" decoding="async"></a>`,
-        );
-      } else {
-        // The same 16:10 frame while it loads, so nothing jumps.
-        parts.push(`<span class="fb-orig-shot fb-orig-shot-loading" data-report-id="${id}" aria-hidden="true"></span>`);
-        this._loadShot(report.id);
-      }
+      parts.push(screenshotHTML(report.id, loaded, T.openScreenshot));
+      if (!loaded) this._loadShot(report.id);
     }
     if (original.page) {
       const link = `<a class="fb-orig-page-link" href="${escapeHTML(original.page)}" target="_blank" rel="noopener noreferrer">${escapeHTML(original.pageLabel)}</a>`;
@@ -1664,6 +1657,7 @@ function saveFilter(filter) {
 // Selector that finds the same control again after a re-render.
 function focusSelector(el) {
   if (el.dataset.reportId) return `[data-report-id="${CSS.escape(el.dataset.reportId)}"]`;
+  if (el.dataset.shotId) return `[data-shot-id="${CSS.escape(el.dataset.shotId)}"]`;
   if (el.dataset.action) {
     const step = el.dataset.stepId ? `[data-step-id="${CSS.escape(el.dataset.stepId)}"]` : "";
     const emoji = el.dataset.emoji ? `[data-emoji="${CSS.escape(el.dataset.emoji)}"]` : "";

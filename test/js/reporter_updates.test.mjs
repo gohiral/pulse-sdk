@@ -36,6 +36,7 @@ import {
   stripDeepLink,
   relativeTime,
   resolvePeek,
+  screenshotHTML,
   socketUrl,
   sortReports,
   timeline,
@@ -628,6 +629,15 @@ describe("what the reporter sent", () => {
   test("only http(s) addresses reach href; an old server's screenshot link is ignored", () => {
     const r = report({ screenshot_url: "https://bucket.example/feedback/app/shot.png", page_url: "data:text/html,x" });
     assert.equal(originalMessage(r), null);
+  });
+
+  test("the screenshot is never a list row, loaded or loading", () => {
+    // A click on a `data-report-id` element reopens that report, which
+    // closed an open verdict box and lost its text (0.7.0).
+    for (const html of [screenshotHTML("r1", "blob:https://app/1", "Open screenshot"), screenshotHTML("r1", null, "x")]) {
+      assert.match(html, /data-shot-id="r1"/);
+      assert.doesNotMatch(html, /data-report-id/);
+    }
   });
 
   test("pageLabel drops scheme, query, fragment and a trailing slash", () => {

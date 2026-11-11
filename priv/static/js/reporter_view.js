@@ -556,6 +556,19 @@ export function originalMessage(report, broken = new Set()) {
   return { text, screenshot, page, pageLabel: page ? pageLabel(page) : null };
 }
 
+// The screenshot on the first step: a link to the widget's own copy at
+// `url`, or the same frame while it loads (`url` null). It carries
+// `data-shot-id`, never `data-report-id`: that attribute marks a row of
+// the report list, and a click on one opens its report afresh, which
+// would close an open verdict box and lose its text.
+export function screenshotHTML(reportId, url, label) {
+  const id = escapeHTML(reportId);
+  if (!url) return `<span class="fb-orig-shot fb-orig-shot-loading" data-shot-id="${id}" aria-hidden="true"></span>`;
+  const href = escapeHTML(url);
+  const name = escapeHTML(label);
+  return `<a class="fb-orig-shot" data-shot-id="${id}" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="${name}" title="${name}"><img src="${href}" alt="" decoding="async"></a>`;
+}
+
 // The address itself when it is http(s), else null: it lands in `href`
 // and `src`, where `javascript:` must never get through.
 export function httpUrl(value) {
