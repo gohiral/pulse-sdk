@@ -24,7 +24,7 @@ their own MIT license (`priv/static/vendor/LICENSE-rrweb.txt`).
 
 ```bash
 # 1. add to mix.exs:
-#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.1"}
+#    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.2"}
 mix deps.get
 mix hi_pulse.install      # interactive; auto-runs mix assets.build at the end
 mix hi_pulse.doctor       # static config check — should pass green
@@ -40,6 +40,15 @@ The feedback widget:
 - A floating "Feedback" button (configurable corner, persisted in
   `localStorage`).
 - A two-column form panel (screenshot on the left, fields on the right).
+- On touch screens the widget is a size larger: text 2px up, buttons 44px
+  tall, chips and icon buttons big enough for a finger. Every text field is
+  16px there, so iPhone Safari doesn't zoom the page in when someone taps
+  one. Panels stay inside the visible part of the screen, above the
+  keyboard when it's up, and the page behind an open panel doesn't
+  scroll. On phones a panel fills the screen, and the form has Cancel and
+  Send in a bar at the top, in sight while the keyboard is up. Browsers
+  that can't capture the screen (iOS, mobile Chrome) get no screenshot
+  button (0.7.2).
 - A canvas annotator (rectangle, arrow, text, crop, undo).
 - A rolling rrweb session-replay buffer (~2.5–5 min) compressed and shipped
   with each submission.
@@ -85,7 +94,7 @@ key; rotate from the admin UI if something feels off.
 # mix.exs
 def deps do
   [
-    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.1"}
+    {:hi_pulse, github: "gohiral/pulse-sdk", tag: "v0.7.2"}
   ]
 end
 ```

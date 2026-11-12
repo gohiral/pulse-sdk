@@ -30,6 +30,11 @@ const NON_TEXT_INPUTS = new Set([
   "submit",
 ]);
 
+// How far the form panel, the reports panel and the peek sit from the
+// screen edge on the FAB's side: the stylesheet's --fb-panel-offset,
+// which grows with the FAB on touch screens.
+export const PANEL_OFFSET = "var(--fb-panel-offset, 64px)";
+
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 export function escapeHTML(value) {

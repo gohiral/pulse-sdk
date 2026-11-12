@@ -51,6 +51,24 @@
   }
 }
 
+/* Widget sizes. Every text size in the widget is one of these steps, and
+   panels open --fb-panel-offset from the screen edge (the FAB's 16px margin,
+   its size and a 12px gap). The touch-screen block at the end of this file
+   raises them, so the whole widget grows on phones in one place. Panels are
+   at most --fb-view-height tall, less their offset and a margin: the window
+   on desktop, the visible part of the screen on touch screens. Prefixed so
+   they never meet a host app's own variables. */
+:where(:root) {
+  --fb-text-2xs: 10px;
+  --fb-text-xs: 11px;
+  --fb-text-sm: 12px;
+  --fb-text-base: 13px;
+  --fb-text-md: 14px;
+  --fb-text-lg: 15px;
+  --fb-panel-offset: 64px;
+  --fb-view-height: 100vh;
+}
+
 .fb-fab {
   position: fixed;
   /* top/bottom/left/right are set inline by the hook based on the saved corner. */
@@ -97,7 +115,7 @@
   z-index: 9999;
   background: rgba(0, 0, 0, 0.55);
   display: block;
-  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  font: var(--fb-text-base)/1.55 'IBM Plex Sans', sans-serif;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
@@ -109,9 +127,9 @@
   position: fixed;
   width: 640px;
   max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 96px);
+  max-height: calc(var(--fb-view-height) - var(--fb-panel-offset) - 32px);
   z-index: 9999;
-  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  font: var(--fb-text-base)/1.55 'IBM Plex Sans', sans-serif;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
@@ -124,7 +142,7 @@
   display: grid;
   grid-template-columns: 280px 1fr;
   height: auto;
-  max-height: calc(100vh - 96px);
+  max-height: calc(var(--fb-view-height) - var(--fb-panel-offset) - 32px);
   box-shadow:
     0 24px 56px rgb(0 0 0 / 0.16),
     0 8px 16px rgb(0 0 0 / 0.08),
@@ -136,6 +154,29 @@
     0 24px 56px rgb(0 0 0 / 0.55),
     0 8px 16px rgb(0 0 0 / 0.4),
     0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+/* Browsers that can't capture the screen: no screenshot column, so the
+   form is one column, as wide as the reports panel where there's room. */
+.fb-form-panel[data-shot="none"] .fb-panel {
+  grid-template-columns: 1fr;
+}
+
+/* A one-column form scrolls as a whole, here as on narrow screens below:
+   its rows don't shrink, so without this a short panel (an iPad with the
+   keyboard up) would cut off Send. One scroll area per panel. */
+.fb-form-panel[data-shot="none"] .fb-panel {
+  overflow-y: auto;
+}
+
+.fb-form-panel[data-shot="none"] .fb-panel-body {
+  overflow-y: visible;
+}
+
+@media (min-width: 601px) {
+  .fb-form-panel[data-shot="none"] {
+    width: 400px;
+  }
 }
 
 /* Landscape screenshots: widen the panel and the screenshot column so the
@@ -204,7 +245,7 @@
   background: transparent;
   border-radius: 4px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   color: var(--color-ink);
   cursor: pointer;
   flex-shrink: 0;
@@ -243,7 +284,7 @@
 .fb-tool-letter {
   font-family: 'IBM Plex Sans', sans-serif;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
 }
 
 /* Inline crop "Anwenden" — only shown while the crop tool is active. Mounts
@@ -258,7 +299,7 @@
   border: none;
   border-radius: 4px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   font-weight: 500;
   cursor: pointer;
   display: inline-flex;
@@ -292,7 +333,7 @@
 .fb-toolbar .fb-btn-secondary {
   height: 30px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
 }
 
 .fb-text-input {
@@ -339,7 +380,7 @@
 
 .fb-section-label {
   display: block;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -356,7 +397,7 @@
 }
 
 .fb-panel-head h3 {
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   font-weight: 500;
   margin: 0;
   letter-spacing: -0.01em;
@@ -387,7 +428,7 @@
   border-radius: 4px;
   padding: 8px 10px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   color: var(--color-ink);
   outline: 0 solid transparent;
   transition: border-color 100ms ease, outline 100ms ease;
@@ -454,7 +495,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   font-weight: 500;
 }
 
@@ -462,7 +503,7 @@
   /* Pulled past the marker dot (6 px) + gap (8 px) so the subtitle aligns
      with the label text, not the dot. */
   padding-left: 14px;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   color: var(--color-tertiary);
   line-height: 1.35;
 }
@@ -518,7 +559,7 @@
   background: var(--color-canvas);
   border-radius: 999px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   font-weight: 500;
   color: var(--color-ink);
   cursor: pointer;
@@ -633,13 +674,13 @@
 .fb-shot-empty:hover svg { color: var(--color-ink); }
 
 .fb-shot-cta {
-  font-size: 14px;
+  font-size: var(--fb-text-md);
   font-weight: 500;
   color: var(--color-ink);
 }
 
 .fb-shot-hint {
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   color: var(--color-secondary);
 }
 
@@ -700,7 +741,7 @@
   border-radius: 999px;
   background: transparent;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   color: var(--color-secondary);
   cursor: pointer;
@@ -739,7 +780,7 @@
 }
 
 .fb-error {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-error);
   margin: 0;
 }
@@ -754,7 +795,7 @@
 .fb-btn-secondary {
   font: inherit;
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   padding: 7px 14px;
   border-radius: 4px;
   cursor: pointer;
@@ -794,7 +835,7 @@
   background: var(--color-ink);
   color: var(--color-canvas);
   border-radius: 4px;
-  font: 500 13px/1.5 'IBM Plex Sans', sans-serif;
+  font: 500 var(--fb-text-base)/1.5 'IBM Plex Sans', sans-serif;
   z-index: 10001;
   opacity: 0;
   transform: translateY(8px);
@@ -823,12 +864,12 @@
   border-radius: 4px;
   padding: 4px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  font: var(--fb-text-base)/1.55 'IBM Plex Sans', sans-serif;
   color: var(--color-ink);
 }
 
 .fb-corner-header {
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -872,7 +913,9 @@
 
 /* Narrow viewport: panel stretches edge-to-edge and stacks the screenshot
    column above the fields column. The big dashed empty-state shrinks so the
-   form fields remain reachable without scrolling. */
+   form fields remain reachable without scrolling. When the stack is still
+   taller than the panel may be (a short screen, the keyboard up), the whole
+   panel scrolls; its rows don't shrink, so otherwise Send would be cut off. */
 @media (max-width: 600px) {
   .fb-form-panel {
     width: auto;
@@ -882,6 +925,13 @@
 
   .fb-form-panel .fb-panel {
     grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  /* One scroll area per panel: a nested one would catch swipes over the
+     fields and never hand them on to the panel. */
+  .fb-form-panel .fb-panel-body {
+    overflow-y: visible;
   }
 
   .fb-shot-col {
@@ -911,7 +961,7 @@
   background: var(--color-ink);
   color: var(--color-canvas);
   font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   line-height: 1.35;
   letter-spacing: 0.01em;
@@ -1095,7 +1145,7 @@
   border-radius: 4px;
   background: var(--color-ink);
   color: var(--color-canvas);
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   line-height: 16px;
   white-space: nowrap;
   opacity: 0;
@@ -1115,7 +1165,7 @@
 
 .fb-btn-sm {
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
 }
 
 .fb-icon-btn {
@@ -1162,7 +1212,7 @@
   width: 320px;
   max-width: calc(100vw - 32px);
   z-index: 9999;
-  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  font: var(--fb-text-base)/1.55 'IBM Plex Sans', sans-serif;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
   opacity: 0;
@@ -1234,7 +1284,7 @@
 }
 
 .fb-peek-sub {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
 }
 
@@ -1252,7 +1302,7 @@
 
 .fb-peek-meta {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -1273,7 +1323,7 @@
   width: 400px;
   max-width: calc(100vw - 32px);
   z-index: 9999;
-  font: 13px/1.55 'IBM Plex Sans', sans-serif;
+  font: var(--fb-text-base)/1.55 'IBM Plex Sans', sans-serif;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
@@ -1281,7 +1331,7 @@
 .fb-rp {
   display: flex;
   flex-direction: column;
-  max-height: min(560px, calc(100vh - 96px));
+  max-height: min(560px, calc(var(--fb-view-height) - var(--fb-panel-offset) - 32px));
   overflow: hidden;
   background: var(--color-canvas);
   border: 1px solid var(--color-edge);
@@ -1322,18 +1372,18 @@
 
 .fb-rp-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   font-weight: 500;
   letter-spacing: -0.01em;
 }
 
 .fb-rp-crumb {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
 }
 
 .fb-conn {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -1410,7 +1460,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1418,14 +1468,14 @@
 }
 
 .fb-rp-time {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
   white-space: nowrap;
 }
 
 .fb-rp-row-title {
   margin-top: 2px;
-  font-size: 15px;
+  font-size: var(--fb-text-lg);
   line-height: 1.4;
   color: var(--color-secondary);
   overflow-wrap: anywhere;
@@ -1438,7 +1488,7 @@
 
 .fb-rp-row-excerpt {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1466,7 +1516,7 @@
   border-radius: 999px;
   background: none;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
   cursor: pointer;
   transition: background 100ms ease, color 100ms ease;
@@ -1497,7 +1547,7 @@
 }
 
 .fb-rp-who {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -1511,7 +1561,7 @@
   border-radius: 4px;
   background: var(--color-raised);
   color: var(--color-secondary);
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -1528,14 +1578,14 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   line-height: 1.45;
   color: var(--color-secondary);
 }
 
 .fb-rp-follow-text strong {
   display: block;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   font-weight: 500;
   color: var(--color-ink);
 }
@@ -1555,7 +1605,7 @@
 
 .fb-rp-report-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fb-text-lg);
   font-weight: 500;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -1563,7 +1613,7 @@
 
 .fb-rp-meta {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -1663,7 +1713,7 @@
 
 .fb-step-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
 }
 
@@ -1677,7 +1727,7 @@
   border: 0;
   background: none;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
   cursor: pointer;
   transition: color 100ms;
@@ -1695,7 +1745,7 @@
 }
 
 .fb-step-time {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
   white-space: nowrap;
 }
@@ -1706,7 +1756,7 @@
   border-radius: 4px;
   background: var(--color-ink);
   color: var(--color-canvas);
-  font-size: 10px;
+  font-size: var(--fb-text-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1737,7 +1787,7 @@
 }
 
 .fb-bubble-by {
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -1802,7 +1852,7 @@
 
 .fb-orig-page {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
   overflow-wrap: anywhere;
 }
@@ -1850,13 +1900,13 @@
   box-shadow: 0 0 0 2px var(--color-canvas);
   color: var(--color-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   line-height: 1;
   transition: opacity 120ms ease-in-out, color 100ms, border-color 100ms;
 }
 
 .fb-rx-e {
-  font-size: 14px;
+  font-size: var(--fb-text-md);
   line-height: 1;
 }
 
@@ -2005,7 +2055,7 @@ button.fb-rx-add:hover,
   background: var(--color-canvas);
   color: var(--color-ink);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fb-text-base);
   outline: none;
 }
 
@@ -2039,7 +2089,7 @@ button.fb-rx-add:hover,
 
 .fb-pick-hint {
   margin: 6px 2px 2px;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   color: var(--color-tertiary);
 }
 
@@ -2063,7 +2113,7 @@ button.fb-rx-add:hover,
   align-items: center;
   gap: 6px;
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-secondary);
 }
 
@@ -2096,7 +2146,7 @@ button.fb-rx-add:hover,
 
 .fb-answer-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   line-height: 20px;
   color: var(--color-secondary);
 }
@@ -2120,7 +2170,7 @@ button.fb-rx-add:hover,
 .fb-answer-hint {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fb-text-xs);
   color: var(--color-tertiary);
 }
 
@@ -2164,7 +2214,7 @@ button.fb-rx-add:hover,
   margin: 0;
   padding: 10px 16px;
   border-top: 1px solid var(--color-edge);
-  font-size: 12px;
+  font-size: var(--fb-text-sm);
   color: var(--color-tertiary);
 }
 
@@ -2211,5 +2261,295 @@ button.fb-rx-add:hover,
     width: auto;
     left: 16px !important;
     right: 16px !important;
+  }
+}
+
+/* Touch screens (phones and tablets): the widget is one size larger so it
+   reads and taps comfortably with a finger. Desktop keeps the sizes above.
+   - Text: every size step is 2px larger (13px body text becomes 15px).
+   - Text fields are 16px: iOS Safari zooms the page into any focused field
+     set under 16px. Scoped by panel, not by field class, so a new field in
+     either panel is covered too. The annotator's text label sizes itself
+     inline to match the drawn label (about 35px on a phone).
+   - Tap targets: buttons 44px tall (Apple's minimum), small buttons and
+     icon buttons 40px, chips 36px, the FAB 44px. Panels open 8px further
+     from the edge so they stay clear of the larger FAB. */
+@media (pointer: coarse) {
+  :where(:root) {
+    --fb-text-2xs: 12px;
+    --fb-text-xs: 13px;
+    --fb-text-sm: 14px;
+    --fb-text-base: 15px;
+    --fb-text-md: 16px;
+    --fb-text-lg: 17px;
+    --fb-panel-offset: var(--fb-vv-gap, 72px);
+    --fb-view-height: var(--fb-vv-height, 100vh);
+  }
+
+  :is(.fb-form-panel, .fb-reports-panel) :is(input, textarea, select) {
+    font-size: 16px;
+  }
+
+  .fb-fab {
+    width: 44px;
+    height: 44px;
+  }
+
+  .fb-fab-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .fb-btn-primary,
+  .fb-btn-secondary {
+    min-height: 44px;
+    padding: 0 16px;
+  }
+
+  .fb-btn-sm {
+    min-height: 40px;
+    padding: 0 14px;
+  }
+
+  .fb-chip {
+    min-height: 36px;
+    padding: 0 14px;
+  }
+
+  .fb-chips,
+  .fb-rp-chips {
+    gap: 8px;
+  }
+
+  .fb-topic-btn {
+    padding: 12px 14px;
+  }
+
+  .fb-icon-btn,
+  .fb-head-link {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .fb-icon-btn svg,
+  .fb-head-link svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* The larger header buttons reach into the header's padding, so the icons
+     stay where they were and the bar grows only a little. */
+  .fb-rp-head .fb-icon-btn {
+    margin: -6px -9px -6px 0;
+  }
+
+  .fb-rp-head-left .fb-icon-btn {
+    margin: -6px 0 -6px -15px;
+  }
+
+  /* Next to the larger button the hint gets a line of its own. */
+  .fb-answer-bar {
+    flex-wrap: wrap;
+  }
+
+  .fb-answer-hint {
+    flex-basis: 100%;
+  }
+
+  .fb-answer-bar .fb-btn-primary {
+    margin-left: auto;
+  }
+
+  .fb-head-link {
+    margin: -10px -12px -10px 0;
+  }
+
+  .fb-peek-close {
+    margin: 0;
+    padding: 11px;
+  }
+
+  .fb-rx {
+    height: 32px;
+    padding: 0 10px;
+  }
+
+  .fb-pick button {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+  }
+
+  .fb-pick-grid button {
+    width: 100%;
+    height: 40px;
+  }
+
+  .fb-pick-x {
+    width: 336px;
+  }
+
+  .fb-pick-grid {
+    max-height: 172px;
+  }
+
+  /* Reply row: one line of the field and the Send button stay equally tall. */
+  .fb-rp-reply .fb-textarea {
+    height: 44px;
+    min-height: 44px;
+    padding: 11px 12px;
+  }
+
+  .fb-rp-reply .fb-textarea:focus {
+    min-height: 84px;
+  }
+
+  .fb-rp-reply .fb-btn-primary {
+    height: 44px;
+  }
+
+  /* Panels stay inside the visible part of the screen. Safari's toolbars
+     and the on-screen keyboard shrink it without moving fixed elements;
+     --fb-vv-top and --fb-vv-height track it (trackVisualViewport in
+     pulse-widget.js). A panel hung from the bottom keeps its bottom edge
+     --fb-panel-offset above the visible bottom: clear of the FAB, or 12px
+     above the keyboard while the keyboard covers the FAB (--fb-vv-gap). */
+  :is(.fb-form-panel, .fb-reports-panel)[data-anchor="bottom"] {
+    top: calc(var(--fb-vv-top, 0px) + var(--fb-view-height) - var(--fb-panel-offset)) !important;
+    bottom: auto !important;
+    translate: 0 -100%;
+  }
+
+  :is(.fb-form-panel, .fb-reports-panel)[data-anchor="top"] {
+    top: calc(var(--fb-vv-top, 0px) + var(--fb-panel-offset)) !important;
+  }
+
+  /* Scrolling inside the widget never carries on into the page, and the
+     page behind an open panel doesn't scroll at all: on a phone the panel
+     covers it. holdTouchScrollBehindPanels (pulse-widget.js) also holds
+     drags that start outside the widget's scroll areas, including in a host
+     app's own scroll containers, which this viewport lock can't reach. */
+  .fb-rp-body,
+  .fb-panel-body,
+  .fb-form-panel .fb-panel,
+  .fb-pick-grid {
+    overscroll-behavior: contain;
+  }
+
+  :root:has(.fb-form-panel, .fb-reports-panel) {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+}
+
+/* Phones: a panel fills the visible screen, with no frame around it (the
+   on-screen keyboard leaves too little room for gutters and a card). A
+   form without the screenshot column (iOS, mobile Chrome) puts Cancel and
+   Send in a bar at the top, so they stay in sight above the keyboard while
+   the fields scroll under it. A form with the column keeps its stacked
+   layout and scrolls as a whole, so the screenshot can't push the bar out
+   of reach. Tablets and desktops keep the floating panels; the peek stays a
+   card. */
+@media (max-width: 600px) and (pointer: coarse) {
+  :is(.fb-form-panel, .fb-reports-panel)[data-anchor] {
+    top: var(--fb-vv-top, 0px) !important;
+    bottom: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    translate: none;
+    width: auto;
+    max-width: none;
+    height: var(--fb-view-height);
+    max-height: none;
+  }
+
+  .fb-form-panel[data-anchor] .fb-panel,
+  .fb-rp {
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .fb-form-panel[data-shot="none"] .fb-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* The bar: Cancel | title | "Your reports" | Send, laid out as one grid
+     row whatever the labels' length, with the error line under it and the
+     fields as the one scroll area below. */
+  .fb-form-panel[data-shot="none"] .fb-fields-col {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .fb-form-panel[data-shot="none"] :is(.fb-panel-head, .fb-panel-foot, .fb-actions) {
+    display: contents;
+  }
+
+  .fb-form-panel[data-shot="none"] [data-action="cancel"] {
+    grid-area: 1 / 1;
+    min-height: 40px;
+    margin: 8px 0 8px 6px;
+    padding: 0 10px;
+    border-color: transparent;
+    background: none;
+  }
+
+  .fb-form-panel[data-shot="none"] .fb-panel-head h3 {
+    grid-area: 1 / 2;
+    padding: 0 6px;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .fb-form-panel[data-shot="none"] .fb-head-link {
+    grid-area: 1 / 3;
+    margin: 0;
+  }
+
+  .fb-form-panel[data-shot="none"] [type="submit"] {
+    grid-area: 1 / 4;
+    min-height: 40px;
+    margin: 8px 12px 8px 4px;
+    padding: 0 16px;
+    border-radius: 6px;
+  }
+
+  .fb-form-panel[data-shot="none"] .fb-error {
+    grid-area: 2 / 1 / 3 / -1;
+    padding: 0 16px 8px;
+  }
+
+  /* Nothing in the fields shrinks to fit; the room at the bottom lets the
+     last row scroll clear of Safari's floating address bar. */
+  .fb-form-panel[data-shot="none"] .fb-panel-body {
+    grid-area: 3 / 1 / 4 / -1;
+    align-self: stretch;
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 16px;
+    padding-bottom: 64px;
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .fb-form-panel[data-shot="none"] .fb-panel-body > * {
+    flex-shrink: 0;
+  }
+
+  /* Text fields: the caret is enough, no ring and no change of frame. */
+  :is(.fb-form-panel, .fb-reports-panel) :is(.fb-input, .fb-textarea):focus {
+    border-color: var(--color-edge-soft);
+    outline: none;
   }
 }

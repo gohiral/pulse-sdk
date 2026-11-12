@@ -21,6 +21,7 @@
 import { Socket } from "phoenix";
 import {
   EMOJI,
+  PANEL_OFFSET,
   QUICK_REACTIONS,
   REPORT_FILTERS,
   canReact,
@@ -743,11 +744,13 @@ export class ReporterUpdates {
 
   applyCorner() {
     const c = this.host.corner();
-    // Same anchoring as the form panel: 64px off the FAB's edge.
+    // Same anchoring as the form panel: clear of the FAB, which grows on
+    // touch screens, so the offset is the stylesheet's variable.
     for (const el of [this.panel, this.peekEl]) {
       if (!el) continue;
-      el.style.top = c.startsWith("top") ? "64px" : "auto";
-      el.style.bottom = c.startsWith("bottom") ? "64px" : "auto";
+      el.dataset.anchor = c.startsWith("top") ? "top" : "bottom";
+      el.style.top = c.startsWith("top") ? PANEL_OFFSET : "auto";
+      el.style.bottom = c.startsWith("bottom") ? PANEL_OFFSET : "auto";
       el.style.left = c.endsWith("left") ? "16px" : "auto";
       el.style.right = c.endsWith("right") ? "16px" : "auto";
     }

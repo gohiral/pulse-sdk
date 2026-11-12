@@ -1,7 +1,8 @@
 // Feedback widget — floating button that opens a two-column form panel.
 // Left column is the screenshot canvas (empty-state dashed dropzone, or the
 // captured thumb); right column carries an optional topic picker, then
-// title / description / type / priority.
+// title / description / type / priority. Browsers that can't capture the
+// screen (iOS Safari, mobile Chrome) get the right column only.
 // Clicking the dropzone triggers the browser's share-tab prompt and opens
 // the annotation overlay. Submitting POSTs a multipart form to the configured
 // hi_pulse_server's `POST /api/v1/events` with the (optional) annotated
@@ -28,7 +29,7 @@ import {
   resumeRecorder,
 } from "./replay_recorder.js";
 import { ReporterUpdates } from "./reporter_updates.js";
-import { titleize } from "./reporter_view.js";
+import { PANEL_OFFSET, titleize } from "./reporter_view.js";
 
 // Defaults for the type/priority dropdowns when the server-side config
 // hasn't loaded yet (or fails to load). Match the server's defaults so a
@@ -250,6 +251,8 @@ export const PulseWidgetHook = {
     this._initTooltipEl();
     this._buildFab();
     this._applyCorner();
+    this._stopViewport = trackVisualViewport();
+    this._stopTouchHold = holdTouchScrollBehindPanels();
     // Start recording immediately on mount so the rolling buffer has
     // pre-incident activity by the time the user clicks Feedback.
     installReplayRecorder();
@@ -330,6 +333,8 @@ export const PulseWidgetHook = {
     this._destroyAnnotator();
     this._closeCornerMenu();
     this._destroyTooltipEl();
+    this._stopViewport?.();
+    this._stopTouchHold?.();
     if (this.fab) this.fab.remove();
   },
 
@@ -520,12 +525,19 @@ export const PulseWidgetHook = {
   _buildFormPanel() {
     const panel = document.createElement("div");
     panel.className = "fb-form-panel";
+    // Without screen capture the screenshot button could only fail.
+    const shots = canCaptureScreen();
+    if (!shots) panel.dataset.shot = "none";
     panel.innerHTML = `
       <form class="fb-panel" novalidate>
-        <aside class="fb-shot-col">
+        ${
+          shots
+            ? `<aside class="fb-shot-col">
           <span class="fb-section-label">${T.fieldScreenshot}</span>
           <div class="fb-screenshot-zone" data-state="empty"></div>
-        </aside>
+        </aside>`
+            : ""
+        }
         <div class="fb-fields-col">
           <header class="fb-panel-head">
             <h3>${T.panelTitle}</h3>
@@ -653,10 +665,11 @@ export const PulseWidgetHook = {
   _applyFormPanelCorner() {
     if (!this.formPanel) return;
     const c = this.corner;
-    // Anchor the panel near the FAB corner, with a 64px gap so it doesn't
-    // sit on top of the (now hidden) FAB position.
-    this.formPanel.style.top = c.startsWith("top") ? "64px" : "auto";
-    this.formPanel.style.bottom = c.startsWith("bottom") ? "64px" : "auto";
+    // Anchor the panel near the FAB corner, clear of the FAB. The offset is
+    // a CSS variable because the FAB grows on touch screens.
+    this.formPanel.dataset.anchor = c.startsWith("top") ? "top" : "bottom";
+    this.formPanel.style.top = c.startsWith("top") ? PANEL_OFFSET : "auto";
+    this.formPanel.style.bottom = c.startsWith("bottom") ? PANEL_OFFSET : "auto";
     this.formPanel.style.left = c.endsWith("left") ? "16px" : "auto";
     this.formPanel.style.right = c.endsWith("right") ? "16px" : "auto";
   },
@@ -1147,11 +1160,17 @@ export const PulseWidgetHook = {
   },
 };
 
+// Whether this browser can capture the tab at all. iOS Safari and mobile
+// Chrome can't, so the form leaves the screenshot column out there.
+function canCaptureScreen() {
+  return typeof navigator.mediaDevices?.getDisplayMedia === "function";
+}
+
 // Capture a single frame of the current tab via the browser's native display
 // capture API. Returns the frame as a canvas + the scale ratio between captured
 // pixels and CSS pixels (used by the annotator to size strokes consistently).
 async function captureDisplay() {
-  if (!navigator.mediaDevices?.getDisplayMedia) {
+  if (!canCaptureScreen()) {
     throw new Error("getDisplayMedia not supported in this browser");
   }
 
@@ -1207,6 +1226,107 @@ async function grabFrame(stream, track) {
   // Wait for the first painted frame so drawImage has real pixels.
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   return video;
+}
+
+// Touch screens: Safari's toolbars and the on-screen keyboard shrink the
+// visible part of the page without moving fixed elements, so a panel can
+// end up partly out of sight. The touch block in pulse-widget.css places
+// the panels inside the visible area --fb-vv-top / --fb-vv-height describe.
+// While the keyboard is up it covers the FAB, so --fb-vv-gap lets a panel
+// sit just above the keyboard. Returns the function that stops tracking.
+const KEYBOARD_MIN_HEIGHT = 150;
+
+function trackVisualViewport() {
+  const vv = window.visualViewport;
+  if (!vv || !window.matchMedia?.("(pointer: coarse)").matches) return () => {};
+  const root = document.documentElement;
+  let frame = 0;
+  let lastHeight = vv.height;
+  const write = () => {
+    frame = 0;
+    root.style.setProperty("--fb-vv-top", `${vv.offsetTop}px`);
+    root.style.setProperty("--fb-vv-height", `${vv.height}px`);
+    if (window.innerHeight - vv.height > KEYBOARD_MIN_HEIGHT) root.style.setProperty("--fb-vv-gap", "12px");
+    else root.style.removeProperty("--fb-vv-gap");
+    if (vv.height < lastHeight) revealFocusedField();
+    lastHeight = vv.height;
+  };
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(write);
+  };
+  write();
+  vv.addEventListener("resize", schedule);
+  vv.addEventListener("scroll", schedule);
+  return () => {
+    vv.removeEventListener("resize", schedule);
+    vv.removeEventListener("scroll", schedule);
+    if (frame) cancelAnimationFrame(frame);
+    root.style.removeProperty("--fb-vv-top");
+    root.style.removeProperty("--fb-vv-height");
+    root.style.removeProperty("--fb-vv-gap");
+  };
+}
+
+// While a widget panel is open on a touch screen, a drag moves only the
+// widget's own scroll areas, or the caret in a text field. Anything else
+// holds still: the page, the host app's own scroll containers and the
+// panel's fixed parts. On a phone the panel covers the page, so a stray
+// drag would otherwise scroll what's behind it. Two-finger gestures pass,
+// so pinch zoom keeps working. The listener exists only while a panel
+// does (both are removed on close), because a non-passive touchmove
+// listener makes the browser wait on it before every scroll.
+const PANELS = ".fb-form-panel, .fb-reports-panel";
+
+function holdTouchScrollBehindPanels() {
+  if (!window.matchMedia?.("(pointer: coarse)").matches || typeof MutationObserver === "undefined") {
+    return () => {};
+  }
+  let holding = false;
+  const sync = () => {
+    const open = Boolean(document.querySelector(PANELS));
+    if (open === holding) return;
+    holding = open;
+    if (open) document.addEventListener("touchmove", holdTouchMove, { passive: false });
+    else document.removeEventListener("touchmove", holdTouchMove);
+  };
+  const observer = new MutationObserver(sync);
+  observer.observe(document.body, { childList: true });
+  sync();
+  return () => {
+    observer.disconnect();
+    holding = false;
+    document.removeEventListener("touchmove", holdTouchMove);
+  };
+}
+
+function holdTouchMove(event) {
+  if (event.touches.length > 1) return;
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const panel = target?.closest(PANELS);
+  if (panel) {
+    if (target.closest("input, textarea, select")) return;
+    for (let el = target; el && el !== panel; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY)) return;
+    }
+  }
+  if (event.cancelable) event.preventDefault();
+}
+
+// The keyboard just opened and a panel shrank: if the focused field now
+// sits below the fold of its panel's scroll area, scroll it into sight.
+function revealFocusedField() {
+  const field = document.activeElement;
+  if (!field?.matches?.("input, textarea, select")) return;
+  const panel = field.closest(".fb-form-panel, .fb-reports-panel");
+  let scroller = field.parentElement;
+  while (scroller && scroller !== panel && scroller.scrollHeight <= scroller.clientHeight) {
+    scroller = scroller.parentElement;
+  }
+  if (!panel || !scroller || scroller === panel) return;
+  const view = scroller.getBoundingClientRect();
+  const box = field.getBoundingClientRect();
+  if (box.bottom > view.bottom - 8) scroller.scrollTop += box.bottom - view.bottom + 8;
+  else if (box.top < view.top + 8) scroller.scrollTop -= view.top + 8 - box.top;
 }
 
 function parseJSON(raw, fallback) {
